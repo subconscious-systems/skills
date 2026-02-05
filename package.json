@@ -1,0 +1,20 @@
+{
+  "name": "agent-development-skills",
+  "version": "1.0.0",
+  "description": "Skills for AI coding agents to build production-ready AI agents",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/subconscious-systems/agent-development-skills.git"
+  },
+  "keywords": [
+    "skills",
+    "claude",
+    "agent",
+    "subconscious",
+    "ai"
+  ],
+  "license": "MIT",
+  "files": [
+    "subconscious-dev"
+  ]
+}
