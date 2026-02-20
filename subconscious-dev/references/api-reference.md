@@ -22,7 +22,9 @@ Get your API key from: https://subconscious.dev/platform
 
 | Engine | API Name | Type | Description |
 |--------|----------|------|-------------|
+| TIM | `tim` | Unified | Flagship unified agent engine for a wide range of tasks |
 | TIM-Edge | `tim-edge` | Unified | Highly efficient, tuned for performance with search tools |
+| TIMINI | `timini` | Compound | Complex reasoning for long-context and tool use (Gemini-3 Flash) |
 | TIM-GPT | `tim-gpt` | Compound | Complex reasoning with OpenAI GPT-4.1 backend |
 | TIM-GPT-Heavy | `tim-gpt-heavy` | Compound | Maximum capability with OpenAI GPT-5.2 backend |
 

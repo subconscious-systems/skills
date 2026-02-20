@@ -1,6 +1,6 @@
 ---
 name: subconscious-dev
-description: "Build AI agents with Subconscious platform. Use when user wants to: build an agent, create an AI agent, use Subconscious, build with TIM, create agent with tools, research agent, search agent, tool-calling agent, subconscious.dev, TIMRUN, tim-gpt, tim-edge, tim-gpt-heavy. Do NOT use for generic OpenAI/Anthropic/LLM tasks without Subconscious."
+description: "Build AI agents with Subconscious platform. Use when user wants to: build an agent, create an AI agent, use Subconscious, build with TIM, create agent with tools, research agent, search agent, tool-calling agent, subconscious.dev, TIMRUN, tim, tim-edge, timini, tim-gpt, tim-gpt-heavy. Do NOT use for generic OpenAI/Anthropic/LLM tasks without Subconscious."
 ---
 
 # Building with Subconscious Platform
@@ -200,7 +200,9 @@ Respond to the user's message.`;
 
 | Engine | API Name | Type | Best For |
 |--------|----------|------|----------|
-| TIM-Edge | `tim-edge` | Unified (custom model + runtime) | Speed, efficiency, search-heavy tasks |
+| TIM | `tim` | Unified | Flagship unified agent engine for a wide range of tasks |
+| TIM-Edge | `tim-edge` | Unified | Speed, efficiency, search-heavy tasks |
+| TIMINI | `timini` | Compound (Gemini-3 Flash backed) | Long-context and tool use, strong reasoning |
 | TIM-GPT | `tim-gpt` | Compound (GPT-4.1 backed) | Most use cases, good balance of cost/performance |
 | TIM-GPT-Heavy | `tim-gpt-heavy` | Compound (GPT-5.2 backed) | Maximum capability, complex reasoning |
 
@@ -446,7 +448,7 @@ const run = await client.run({
   engine: 'tim-gpt',
   input: {
     instructions: 'Analyze the latest news about electric vehicles',
-    tools: [{ type: 'platform', id: 'parallel_search' }],
+    tools: [{ type: 'platform', id: 'fast_search' }],
     answerFormat: zodToJsonSchema(AnalysisSchema, 'Analysis'),
   },
   options: { awaitCompletion: true },
@@ -958,7 +960,7 @@ See `references/streaming-and-reasoning.md` for complete implementation.
 5. **Tools must be publicly accessible** - Use ngrok for local development
 6. **Response has `result.answer`** - The clean text is in `result.answer`, not `result.content`
 7. **Reasoning field is optional** - Contains internal steps, useful for debugging
-8. **Engine names**: Use `tim-edge`, `tim-gpt`, `tim-gpt-heavy` (not `tim-small`/`tim-large`)
+8. **Engine names**: Use `tim`, `tim-edge`, `timini`, `tim-gpt`, `tim-gpt-heavy`
 9. **Streaming shows raw JSON** - You must parse `{"reasoning": [...], "answer": "..."}` yourself. For simple chat, use `run()` instead.
 10. **`tools: []` is required** - Even if you have no tools, pass an empty array.
 11. **No system message field** - Prepend system prompt to your instructions string.
@@ -996,7 +998,7 @@ See `references/examples.md` for complete Next.js API route example with Server-
 - [ ] Clear error messages
 
 ### Cost Control
-- [ ] Use `tim-edge` for simple tasks, `tim-gpt-heavy` only when needed
+- [ ] Use `tim` or `tim-edge` for simple tasks, `tim-gpt-heavy` only when needed
 - [ ] Implement usage quotas per user if needed
 - [ ] Monitor token usage in production
 

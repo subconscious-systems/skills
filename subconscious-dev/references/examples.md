@@ -350,7 +350,7 @@ const run = await client.run({
   engine: 'tim-gpt',
   input: {
     instructions: 'Analyze the latest news about electric vehicles',
-    tools: [{ type: 'platform', id: 'parallel_search' }],
+    tools: [{ type: 'platform', id: 'fast_search' }],
     answerFormat: zodToJsonSchema(AnalysisSchema, 'Analysis'),
   },
   options: { awaitCompletion: true },

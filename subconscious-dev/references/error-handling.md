@@ -69,7 +69,7 @@ try {
 | Code | Meaning | Fix |
 |------|---------|-----|
 | `invalid_request` | Request parameters invalid | Check required fields and types |
-| `invalid_engine` | Engine name invalid | Use `tim-edge`, `tim-gpt`, or `tim-gpt-heavy` |
+| `invalid_engine` | Engine name invalid | Use `tim`, `tim-edge`, `timini`, `tim-gpt`, or `tim-gpt-heavy` |
 | `invalid_tool` | Tool definition invalid | Check tool schema |
 
 ```typescript

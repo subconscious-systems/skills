@@ -128,7 +128,7 @@ type Tool = PlatformTool | FunctionTool | MCPTool;
 ```typescript
 interface PlatformTool {
   type: "platform";
-  id: string;  // e.g., "web_search", "webpage_understanding"
+  id: string;  // e.g., "fast_search", "web_search", "page_reader"
   options?: Record<string, any>;
 }
 ```
@@ -255,7 +255,7 @@ class Subconscious {
   });
 
   run(params: {
-    engine: "tim-edge" | "tim-gpt" | "tim-gpt-heavy";
+    engine: "tim" | "tim-edge" | "timini" | "tim-gpt" | "tim-gpt-heavy";
     input: RunInput;
     output?: {
       callbackUrl?: string;  // Webhook URL
@@ -264,7 +264,7 @@ class Subconscious {
   }): Promise<RunResponse>;
 
   stream(params: {
-    engine: "tim-edge" | "tim-gpt" | "tim-gpt-heavy";
+    engine: "tim" | "tim-edge" | "timini" | "tim-gpt" | "tim-gpt-heavy";
     input: RunInput;
     output?: {
       callbackUrl?: string;

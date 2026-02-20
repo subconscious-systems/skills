@@ -52,34 +52,38 @@ type PropertySchema = {
 };
 ```
 
-## Platform Tools
+## Simple Search Tools (Platform Tools)
 
-Built-in tools hosted by Subconscious. No setup required.
+Built-in tools hosted by Subconscious. No setup required. Example: `{ type: "platform", id: "fast_search" }`.
 
-| ID | Name | Description |
-|----|------|-------------|
-| `web_search` | Google Search | Search the web for information |
-| `webpage_understanding` | Jina Reader | Extract and summarize webpage content |
-| `parallel_search` | Parallel Search | Precision search for facts from authoritative sources |
-| `parallel_extract` | Parallel Extract | Extract specific content from a webpage |
-| `exa_search` | Exa Search | Semantic search for high-quality content |
-| `exa_crawl` | Exa Crawl | Retrieve full webpage content |
-| `exa_find_similar` | Exa Similar | Find pages similar to a given URL |
+| Tool Name | API Name | Description |
+|-----------|----------|-------------|
+| Fast Search | `fast_search` | Extremely fast search for simple factual lookups |
+| Web Search | `web_search` | Comprehensive web search for detailed research |
+| Fresh Search | `fresh_search` | Search the web for content from the last 7 days |
+| Page Reader | `page_reader` | Extract content from a specific webpage URL |
+| Find Similar | `find_similar` | Find similar links to a given URL |
+| People Search | `people_search` | Search for people, profiles, and bios |
+| Company Search | `company_search` | Search for companies, funding info, and business details |
+| News Search | `news_search` | Search for news articles and press coverage |
+| Tweet Search | `tweet_search` | Search for tweets and Twitter/X discussions |
+| Research Paper Search | `research_paper_search` | Search for academic research papers and studies |
+| Google Search | `google_search` | Search the web using Google |
 
 **Usage:**
 ```python
 tools = [
+    {"type": "platform", "id": "fast_search"},
     {"type": "platform", "id": "web_search"},
-    {"type": "platform", "id": "webpage_understanding"},
-    {"type": "platform", "id": "parallel_search"},
+    {"type": "platform", "id": "page_reader"},
 ]
 ```
 
 ```typescript
 tools: [
+  { type: "platform", id: "fast_search" },
   { type: "platform", id: "web_search" },
-  { type: "platform", id: "webpage_understanding" },
-  { type: "platform", id: "parallel_search" },
+  { type: "platform", id: "page_reader" },
 ]
 ```
 
