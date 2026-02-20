@@ -1,6 +1,6 @@
 {
     "name": "skills",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Skills for AI coding agents to build production-ready AI agents",
     "repository": {
         "type": "git",
