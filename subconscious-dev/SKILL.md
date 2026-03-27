@@ -196,6 +196,40 @@ User: ${userMessage}
 Respond to the user's message.`;
 ```
 
+## Skills
+
+Skills are reusable knowledge packages that give agents specialized capabilities. Pass skill names in `input.skills` and the agent loads instructions on demand via progressive disclosure (manifest in system prompt → full instructions via `LoadSkill` tool → reference docs via `ReadSkillReference` tool).
+
+### Python
+
+```python
+run = client.run(
+    engine="tim-gpt",
+    input={
+        "instructions": "Build a REST API with proper error handling",
+        "tools": [{"type": "platform", "id": "web_search"}],
+        "skills": ["api-design", "error-handling"],
+    },
+    options={"await_completion": True},
+)
+```
+
+### Node.js/TypeScript
+
+```typescript
+const run = await client.run({
+  engine: "tim-gpt",
+  input: {
+    instructions: "Build a REST API with proper error handling",
+    tools: [{ type: "platform", id: "web_search" }],
+    skills: ["api-design", "error-handling"],
+  },
+  options: { awaitCompletion: true },
+});
+```
+
+Skills have three visibility levels: `platform` (built-in), `public` (shared), and `org` (private to your team). Browse and create skills at [subconscious.dev/platform/skills](https://www.subconscious.dev/platform/skills). Full CRUD API available under `/v1/skills`.
+
 ## Choosing an Engine
 
 | Engine | API Name | Type | Best For |
@@ -613,6 +647,49 @@ answer = status.result.answer
 ### Streaming (Advanced)
 
 See `references/examples.md` for streaming examples. **Note**: Streaming returns raw JSON, not clean text.
+
+## Webhooks
+
+Get a POST when runs complete instead of polling.
+
+### Per-Run Callback
+
+Pass `callbackUrl` in the `output` field:
+
+```python
+run = client.run(
+    engine="tim-gpt",
+    input={"instructions": "Long-running analysis"},
+    output={"callbackUrl": "https://your-server.com/webhook"}
+)
+```
+
+```typescript
+const run = await client.run({
+  engine: 'tim-gpt',
+  input: { instructions: 'Long-running analysis' },
+  output: { callbackUrl: 'https://your-server.com/webhook' },
+});
+```
+
+### Org-Wide Subscriptions
+
+Subscribe to webhooks for **all** runs via `POST /v1/webhooks/subscriptions`:
+
+```bash
+curl -X POST https://api.subconscious.dev/v1/webhooks/subscriptions \
+  -H "Authorization: Bearer $SUBCONSCIOUS_API_KEY" \
+  -d '{"callbackUrl":"https://your-server.com/webhook","eventTypes":["job.succeeded","job.failed"],"secret":"signing-secret"}'
+```
+
+Features:
+- **Event filtering**: `job.succeeded`, `job.failed`
+- **Enable/disable**: pause deliveries without deleting config
+- **HMAC-SHA256 signing**: verify payloads with `X-Webhook-Signature` header when a secret is set
+- **Delivery log**: view history + payloads in the [dashboard](https://www.subconscious.dev/platform/webhooks)
+- **SQS-backed**: retries with exponential backoff, dead-letter queue
+
+Both per-run `callbackUrl` and org subscriptions can fire for the same run.
 
 ## SDK Methods Reference
 
