@@ -203,7 +203,7 @@ const answer = run.result?.answer;
 
 ## Webhook Handler
 
-Subconscious POSTs the result to your webhook when an async run completes:
+Subconscious POSTs the result to your webhook when an async run completes. The payload contains `result.fullResponse` — a JSON string with `reasoning` and `answer`:
 
 ```typescript
 // In convex/http.ts — add this route
@@ -217,10 +217,10 @@ http.route({
     if (status === "succeeded") {
       let answer: string;
       try {
-        const parsed = JSON.parse(result.choices[0].message.content);
-        answer = parsed.answer ?? result.choices[0].message.content;
+        const full = JSON.parse(result.fullResponse);
+        answer = full.answer ?? result.fullResponse;
       } catch {
-        answer = result.choices[0].message.content;
+        answer = result.fullResponse ?? "No answer";
       }
       await ctx.runMutation(internal.agentRuns.updateRun, {
         runId,
@@ -238,6 +238,24 @@ http.route({
   }),
 });
 ```
+
+### Webhook Payload Shape
+
+```json
+{
+  "runId": "bcccd0a3-...",
+  "status": "succeeded",
+  "engine": "tim-gpt",
+  "result": {
+    "fullResponse": "{\"reasoning\": [...], \"answer\": \"The clean text answer\"}"
+  },
+  "tokens": { "inputTokens": 1980, "outputTokens": 406, "costCents": 0 },
+  "createdAt": "2026-03-26T20:06:37.956Z",
+  "completedAt": "2026-03-26T20:06:46.777Z"
+}
+```
+
+Key: `result.fullResponse` is a JSON **string** — parse it to get `.answer` and `.reasoning`.
 
 ## Structured Output with Zod
 
@@ -288,7 +306,7 @@ for await (const event of stream) {
 }
 ```
 
-**WARNING**: Stream content is raw JSON, not clean text. See the `subconscious-dev` skill's `references/streaming-and-reasoning.md` for parsing guidance.
+**WARNING**: Stream content is raw JSON, not clean text. For most chat UIs, use `run()` with `awaitCompletion: true` instead — it returns clean text in `run.result?.answer`.
 
 ## Platform Tools (No Server Needed)
 
@@ -299,9 +317,18 @@ tools: [
   // Built-in platform tools (no URL needed)
   { type: "platform", id: "web_search" },
   { type: "platform", id: "fast_search" },
+  { type: "platform", id: "fresh_search" },
   { type: "platform", id: "news_search" },
   { type: "platform", id: "page_reader" },
-  { type: "platform", id: "fresh_search" },
+  { type: "platform", id: "find_similar" },
+  { type: "platform", id: "people_search" },
+  { type: "platform", id: "company_search" },
+  { type: "platform", id: "tweet_search" },
+  { type: "platform", id: "research_paper_search" },
+  { type: "platform", id: "google_search" },
+
+  // MCP tools (connect to any MCP server)
+  { type: "mcp", url: "https://mcp.notion.so/v1", allowedTools: ["search"] },
 
   // Your custom Convex tools
   { type: "function", name: "create_item", url: `${siteUrl}/tools/create-item`, /* ... */ },

@@ -80,9 +80,15 @@ const tools = [
   // Built-in platform tools (no URL or schema needed)
   { type: "platform", id: "web_search" },
   { type: "platform", id: "fast_search" },
+  { type: "platform", id: "fresh_search" },
   { type: "platform", id: "news_search" },
   { type: "platform", id: "page_reader" },
-  { type: "platform", id: "fresh_search" },
+  { type: "platform", id: "find_similar" },
+  { type: "platform", id: "people_search" },
+  { type: "platform", id: "company_search" },
+  { type: "platform", id: "tweet_search" },
+  { type: "platform", id: "research_paper_search" },
+  { type: "platform", id: "google_search" },
 
   // Your Convex HTTP endpoints
   { type: "function", name: "create_item", url: "...", /* ... */ },
@@ -90,29 +96,53 @@ const tools = [
 ];
 ```
 
+### MCP Tools
+
+Connect to any Model Context Protocol server:
+
+```typescript
+tools: [
+  {
+    type: "mcp",
+    url: "https://mcp.notion.so/v1",
+    allowedTools: ["search", "get_page"],  // omit for all tools
+    auth: { type: "bearer", token: "your-token" },  // optional
+  },
+]
+```
+
+### Tool Headers
+
+Add custom HTTP headers for authenticated tool endpoints:
+
+```typescript
+{
+  type: "function",
+  name: "my_api",
+  description: "Call my authenticated API",
+  url: "https://api.example.com/endpoint",
+  method: "POST",
+  parameters: { /* ... */ },
+  headers: {
+    "x-api-key": "your-secret-key",
+  },
+}
+```
+
 ## Convex HTTP Tool Endpoints
 
 ### Body Format
 
-Subconscious wraps tool calls as:
+Subconscious sends tool parameters **directly** in the POST body:
 ```json
-{
-  "tool_name": "create_item",
-  "parameters": { "name": "Deploy to production" },
-  "request_id": "req_xyz"
-}
+{ "name": "Deploy to production" }
 ```
 
-Extract params from `body.parameters`, NOT from the top-level body:
+Your HTTP action receives the parameters as top-level fields in `request.json()`. No unwrapping needed:
 
 ```typescript
-// Helper: extract params from Subconscious tool call format
-function parseBody(body: Record<string, unknown>) {
-  if (body.parameters && typeof body.parameters === "object") {
-    return body.parameters as Record<string, unknown>;
-  }
-  return body;  // Fallback for direct calls (e.g. curl testing)
-}
+const body = await request.json();
+const name = body.name as string;  // Parameters are top-level
 ```
 
 ### Complete HTTP Router with CORS
@@ -132,14 +162,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-// Helper: extract params from Subconscious tool call format
-function parseBody(body: Record<string, unknown>) {
-  if (body.parameters && typeof body.parameters === "object") {
-    return body.parameters as Record<string, unknown>;
-  }
-  return body;
-}
-
 // Preflight for create-item
 http.route({
   path: "/tools/create-item",
@@ -155,8 +177,7 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const body = await request.json();
-    const params = parseBody(body);
-    const name = params.name as string;
+    const name = body.name as string;
 
     if (!name) {
       return new Response(JSON.stringify({ error: "name required" }), {
@@ -191,12 +212,11 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const body = await request.json();
-    const params = parseBody(body);
 
     await ctx.runMutation(internal.items.updateStatus, {
-      id: params.id as string,
+      id: body.id as string,
       status: "done",
-      result: params.result as string | undefined,
+      result: body.result as string | undefined,
     });
 
     return new Response(JSON.stringify({ success: true }), {
@@ -207,6 +227,7 @@ http.route({
 });
 
 // Webhook: Subconscious calls this when an async run completes
+// Payload shape: { runId, status, result: { fullResponse: "{...}" }, tokens, ... }
 http.route({
   path: "/webhooks/subconscious",
   method: "POST",
@@ -217,10 +238,10 @@ http.route({
     if (status === "succeeded") {
       let answer: string;
       try {
-        const parsed = JSON.parse(result.choices[0].message.content);
-        answer = parsed.answer ?? result.choices[0].message.content;
+        const full = JSON.parse(result.fullResponse);
+        answer = full.answer ?? result.fullResponse;
       } catch {
-        answer = result.choices[0].message.content;
+        answer = result.fullResponse ?? "No answer";
       }
       await ctx.runMutation(internal.agentRuns.updateRun, {
         runId,
@@ -333,9 +354,14 @@ export async function POST(req: NextRequest) {
             `data: ${JSON.stringify({ type: "thought", thought: "Thinking..." })}\n\n`
           ));
         } else if (event.type === "done") {
-          const answer = JSON.parse(fullContent).answer;
+          let answer: string;
+          try {
+            const parsed = JSON.parse(fullContent);
+            answer = parsed.answer ?? fullContent;
+          } catch {
+            answer = fullContent;
+          }
 
-          // Save to Convex (triggers reactive update on frontend)
           await convex.mutation(api.chat.saveMessage, {
             reportId, role: "assistant", content: answer,
           });
@@ -373,25 +399,19 @@ This is the power of combining Convex + Subconscious: the AI agent modifies data
 
 ## Subconscious Engines
 
-| Engine | Best For |
-|--------|----------|
-| `tim` | General tasks, default choice |
-| `tim-edge` | Fast tasks, search-heavy, budget |
-| `timini` | Long context, complex reasoning |
-| `tim-gpt` | Complex reasoning, tool orchestration |
-| `tim-gpt-heavy` | Hardest tasks, highest quality |
+| Engine | Type | Best For |
+|--------|------|----------|
+| `tim` | Unified | Flagship unified agent for a wide range of tasks |
+| `tim-edge` | Unified | Speed, efficiency, search-heavy tasks |
+| `timini` | Compound (Gemini-3 Flash) | Long-context and tool use, strong reasoning |
+| `tim-gpt` | Compound (GPT-4.1) | Most use cases, good cost/performance balance |
+| `tim-gpt-heavy` | Compound (GPT-5.2) | Maximum capability, complex reasoning |
 
 ## Debugging Tool Endpoints
 
-Test HTTP endpoints directly with `curl`:
+Test HTTP endpoints directly with `curl` — parameters go directly in the body:
 
 ```bash
-# Test with Subconscious body format
-curl -X POST https://your-deployment.convex.site/tools/create-item \
-  -H "Content-Type: application/json" \
-  -d '{"parameters": {"name": "Test item"}}'
-
-# Test with direct body format (fallback in parseBody)
 curl -X POST https://your-deployment.convex.site/tools/create-item \
   -H "Content-Type: application/json" \
   -d '{"name": "Test item"}'

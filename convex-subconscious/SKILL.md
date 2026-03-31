@@ -97,7 +97,7 @@ For **Next.js with auth**, also see `references/auth-nextjs.md` for the addition
 See `references/agent-from-convex.md` for the complete pattern: Convex actions calling Subconscious SDK, async runs with webhook callbacks, agent run tracking, and structured output with Zod.
 
 ### HTTP Tool Endpoints
-See `references/subconscious-integration.md` for HTTP action patterns, CORS helpers, tool schema requirements (CRITICAL: `additionalProperties: false`), the `parseBody` helper, webhook endpoints, and the `defaults` pattern.
+See `references/subconscious-integration.md` for HTTP action patterns, CORS helpers, tool schema requirements (CRITICAL: `additionalProperties: false`), webhook endpoints, MCP tools, tool headers, and the `defaults` pattern.
 
 ### Real-Time Data
 See `references/realtime-patterns.md` for schema design, query/mutation patterns, reactive UI with useQuery/useAction, Vite and Next.js provider setup, and optimistic updates.
@@ -118,7 +118,7 @@ See `references/common-pitfalls.md` for every bug encountered with solutions.
 
 4. **`process.env.CONVEX_SITE_URL`** is always available in Convex functions — use it to construct tool callback URLs.
 
-5. **HTTP tool body format** — Subconscious wraps tool calls as `{ tool_name, parameters: { ...args }, request_id }`. Extract params from `body.parameters`, NOT from the top-level body.
+5. **HTTP tool body format** — Subconscious sends tool parameters **directly** in the POST body (e.g. `{ name: "test" }`). Read params from the top-level body in your HTTP action.
 
 6. **Auth on AI-called mutations** — Mutations called by Subconscious via HTTP tool routes don't have user auth context. Enforce auth upstream (in the action that triggers the AI), keep the mutations themselves permissive. Use `internalMutation` to prevent direct client calls.
 
@@ -128,13 +128,13 @@ See `references/common-pitfalls.md` for every bug encountered with solutions.
 
 ## Available Engines
 
-| Engine | API Name | Best For |
-|--------|----------|----------|
-| TIM | `tim` | General tasks, default choice |
-| TIM-Edge | `tim-edge` | Fast, search-heavy tasks |
-| TIMINI | `timini` | Long context, complex reasoning |
-| TIM-GPT | `tim-gpt` | Complex reasoning (GPT-4.1) |
-| TIM-GPT-Heavy | `tim-gpt-heavy` | Hardest tasks (GPT-5.2) |
+| Engine | API Name | Type | Best For |
+|--------|----------|------|----------|
+| TIM | `tim` | Unified | Flagship unified agent for a wide range of tasks |
+| TIM-Edge | `tim-edge` | Unified | Speed, efficiency, search-heavy tasks |
+| TIMINI | `timini` | Compound (Gemini-3 Flash) | Long-context and tool use, strong reasoning |
+| TIM-GPT | `tim-gpt` | Compound (GPT-4.1) | Most use cases, good balance of cost/performance |
+| TIM-GPT-Heavy | `tim-gpt-heavy` | Compound (GPT-5.2) | Maximum capability, complex reasoning |
 
 **Recommendation**: Start with `tim-gpt` for most applications.
 

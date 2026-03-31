@@ -206,10 +206,9 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const body = await request.json();
-    const params = body.parameters ?? body;
 
     const id = await ctx.runMutation(internal.items.create, {
-      name: params.name,
+      name: body.name,
     });
 
     return new Response(JSON.stringify({ success: true, id }), {

@@ -124,16 +124,12 @@ parameters: {
 ### 11. Tool receives empty/wrong params
 **Symptom:** Convex HTTP endpoint receives `undefined` for expected parameters.
 
-**Cause:** Reading params from top-level body instead of `body.parameters`.
+**Cause:** Reading params from wrong path (e.g. `body.parameters` instead of top-level body).
 
-**Fix:** Use the `parseBody` helper:
+**Fix:** Subconscious sends tool parameters directly in the POST body. Read them from the top level:
 ```typescript
-function parseBody(body: Record<string, unknown>) {
-  if (body.parameters && typeof body.parameters === "object") {
-    return body.parameters as Record<string, unknown>;
-  }
-  return body;
-}
+const body = await request.json();
+const name = body.name as string;  // Parameters are top-level fields
 ```
 
 ### 12. `defaults` key not in properties
@@ -274,13 +270,13 @@ When auth isn't working:
 6. Clear browser state: `localStorage.clear()` + clear cookies + hard refresh
 
 When Subconscious tools aren't working:
-1. Test HTTP endpoint directly with `curl`:
+1. Test HTTP endpoint directly with `curl` (params go directly in body):
    ```bash
    curl -X POST https://your-deployment.convex.site/tools/list-steps \
      -H "Content-Type: application/json" \
-     -d '{"parameters": {"reportId": "abc123"}}'
+     -d '{"reportId": "abc123"}'
    ```
-2. Check Convex function logs for errors
+2. Check Convex function logs for errors: `npx convex logs --follow`
 3. Verify `additionalProperties: false` on ALL tool schemas
 4. Check `defaults` keys match `properties` keys
 5. Verify the Convex site URL is correct in tool URLs
