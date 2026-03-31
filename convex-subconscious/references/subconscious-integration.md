@@ -237,11 +237,17 @@ http.route({
 
     if (status === "succeeded") {
       let answer: string;
-      try {
-        const full = JSON.parse(result.fullResponse);
-        answer = full.answer ?? result.fullResponse;
-      } catch {
-        answer = result.fullResponse ?? "No answer";
+      if (typeof result.answer === "string") {
+        answer = result.answer;
+      } else if (result.fullResponse) {
+        try {
+          const full = JSON.parse(result.fullResponse);
+          answer = full.answer ?? result.fullResponse;
+        } catch {
+          answer = result.fullResponse;
+        }
+      } else {
+        answer = "No answer";
       }
       await ctx.runMutation(internal.agentRuns.updateRun, {
         runId,

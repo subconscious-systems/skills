@@ -126,6 +126,7 @@ export const triggerAgent = action({
       input: {
         instructions: args.instructions,
         tools: [
+          { type: "platform", id: "web_search" },
           {
             type: "function",
             name: "create_item",
@@ -158,9 +159,9 @@ export const triggerAgent = action({
             },
           },
         ],
+        skills: ["api-design"],  // optional: attach reusable knowledge packages
       },
       output: {
-        // Subconscious will POST the result here when done
         callbackUrl: `${siteUrl}/webhooks/subconscious`,
       },
     });
@@ -203,7 +204,7 @@ const answer = run.result?.answer;
 
 ## Webhook Handler
 
-Subconscious POSTs the result to your webhook when an async run completes. The payload contains `result.fullResponse` — a JSON string with `reasoning` and `answer`:
+Subconscious POSTs the result to your webhook when an async run completes:
 
 ```typescript
 // In convex/http.ts — add this route
@@ -216,11 +217,19 @@ http.route({
 
     if (status === "succeeded") {
       let answer: string;
-      try {
-        const full = JSON.parse(result.fullResponse);
-        answer = full.answer ?? result.fullResponse;
-      } catch {
-        answer = result.fullResponse ?? "No answer";
+      if (typeof result.answer === "string") {
+        // Structured format: result = { answer, reasoning }
+        answer = result.answer;
+      } else if (result.fullResponse) {
+        // Legacy format: result = { fullResponse: "<JSON string>" }
+        try {
+          const full = JSON.parse(result.fullResponse);
+          answer = full.answer ?? result.fullResponse;
+        } catch {
+          answer = result.fullResponse;
+        }
+      } else {
+        answer = "No answer";
       }
       await ctx.runMutation(internal.agentRuns.updateRun, {
         runId,
@@ -255,7 +264,7 @@ http.route({
 }
 ```
 
-Key: `result.fullResponse` is a JSON **string** — parse it to get `.answer` and `.reasoning`.
+The `result.fullResponse` field is a JSON **string** — parse it to get `.answer` and `.reasoning`. The handler above also supports a forthcoming structured format where `result.answer` is available directly.
 
 ## Structured Output with Zod
 
@@ -382,6 +391,54 @@ export function AgentPanel() {
 }
 ```
 
+## Skills (Reusable Knowledge Packages)
+
+Pass skill names in `input.skills` to give the agent specialized knowledge:
+
+```typescript
+const run = await client.run({
+  engine: "tim-gpt",
+  input: {
+    instructions: "Build a REST API with error handling",
+    tools: [{ type: "platform", id: "web_search" }],
+    skills: ["api-design", "error-handling"],
+  },
+  options: { awaitCompletion: true },
+});
+```
+
+Skills use progressive disclosure — the agent sees a brief manifest, then loads full instructions on demand via `LoadSkill` and `ReadSkillReference` (auto-injected). Browse and create skills at [subconscious.dev/platform/skills](https://www.subconscious.dev/platform/skills).
+
+## Error Handling
+
+The SDK exports named error classes for specific failure modes:
+
+```typescript
+import { SubconsciousError, AuthenticationError, RateLimitError } from "subconscious";
+
+try {
+  const run = await client.run({ /* ... */ });
+} catch (error) {
+  if (error instanceof AuthenticationError) {
+    console.error("Invalid API key");
+  } else if (error instanceof RateLimitError) {
+    console.error("Rate limited, retry later");
+  } else if (error instanceof SubconsciousError) {
+    console.error(`API error: ${error.code} - ${error.message}`);
+  }
+}
+```
+
+Always check `run.status` before accessing `run.result`:
+
+```typescript
+if (run.status === "succeeded") {
+  console.log(run.result?.answer);
+} else if (run.status === "failed") {
+  console.error("Run failed:", run.error?.message);
+}
+```
+
 ## Key Architecture Rules
 
 1. **Actions call external APIs, mutations don't.** The Subconscious SDK call must be inside an `action` or `internalAction`.
@@ -393,3 +450,13 @@ export function AgentPanel() {
 4. **Use `internal.*` for mutations called by HTTP actions.** This prevents the client from calling them directly while letting your HTTP actions and Convex actions use them.
 
 5. **The webhook pattern is preferred for UI.** Async run → webhook → Convex mutation → reactive query update. The user sees real-time status without blocking.
+
+## SDK Methods Reference
+
+| Method | Description |
+|--------|-------------|
+| `client.run(params)` | Create a run (sync or async) |
+| `client.stream(params)` | Stream text deltas in real-time |
+| `client.get(runId)` | Get current status of a run |
+| `client.wait(runId, options?)` | Poll until completion |
+| `client.cancel(runId)` | Cancel a running/queued run |

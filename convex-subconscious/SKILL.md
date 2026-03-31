@@ -1,7 +1,7 @@
 ---
 name: convex-subconscious
 description: Build real-time AI apps with Convex backend and Subconscious AI agents. This skill should be used when the user asks to "set up Convex", "add Convex auth", "create a Convex schema", "add real-time data", "connect Subconscious to Convex", "build AI agent tools with Convex", "set up Convex Auth with Next.js", "add email password auth with Convex", "create HTTP endpoints for AI tools", "integrate Subconscious agents", "trigger agent from Convex", "webhook callback for agent", "track agent runs", or mentions Convex, convex-dev/auth, ConvexAuthProvider, ConvexReactClient, httpRouter, Subconscious tools with Convex HTTP actions, ConvexProvider, useAction, useQuery with agents.
-version: 2.0.0
+version: 2.1.0
 ---
 
 # Convex + Subconscious: Full-Stack Real-Time AI Apps
@@ -43,13 +43,23 @@ Convex Backend (real-time database + functions)
           ↓
 Subconscious AI Agent (tim-gpt / tim-edge / tim-gpt-heavy)
   ├── Calls Convex HTTP endpoints as tools
-  ├── Uses platform tools (web_search, news_search)
+  ├── Uses platform tools (web_search, news_search, etc.)
+  ├── Connects to MCP servers for external integrations
+  ├── Loads skills for specialized knowledge
   └── Returns structured answers or calls webhook
 ```
 
 ## Quick Setup
 
-### 1. Install & Initialize
+### Option A: Use the Official Template (Fastest)
+
+```bash
+npx create-subconscious-app my-app --example convex_realtime
+```
+
+This scaffolds a working Convex + Subconscious app with real-time updates, tool calling, and a React frontend.
+
+### Option B: Manual Setup
 
 ```bash
 npm install subconscious convex
@@ -64,6 +74,12 @@ npx convex env list  # verify
 ```
 
 Frontend `.env.local` needs only `VITE_CONVEX_URL` or `NEXT_PUBLIC_CONVEX_URL` (auto-set by `npx convex dev`).
+
+### Install This Skill for AI Coding Assistants
+
+```bash
+npx skills add https://github.com/subconscious-systems/skills --skill convex-subconscious
+```
 
 ### 2. Required Files
 
