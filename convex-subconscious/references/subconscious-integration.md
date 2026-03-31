@@ -227,7 +227,7 @@ http.route({
 });
 
 // Webhook: Subconscious calls this when an async run completes
-// Payload shape: { runId, status, result: { fullResponse: "{...}" }, tokens, ... }
+// Payload: { runId, status, result: { answer, reasoning }, tokens, ... }
 http.route({
   path: "/webhooks/subconscious",
   method: "POST",
@@ -236,23 +236,10 @@ http.route({
     const { runId, status, result } = payload;
 
     if (status === "succeeded") {
-      let answer: string;
-      if (typeof result.answer === "string") {
-        answer = result.answer;
-      } else if (result.fullResponse) {
-        try {
-          const full = JSON.parse(result.fullResponse);
-          answer = full.answer ?? result.fullResponse;
-        } catch {
-          answer = result.fullResponse;
-        }
-      } else {
-        answer = "No answer";
-      }
       await ctx.runMutation(internal.agentRuns.updateRun, {
         runId,
         status: "succeeded",
-        answer,
+        answer: result.answer,
       });
     } else {
       await ctx.runMutation(internal.agentRuns.updateRun, { runId, status });

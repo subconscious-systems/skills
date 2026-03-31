@@ -204,7 +204,7 @@ const answer = run.result?.answer;
 
 ## Webhook Handler
 
-Subconscious POSTs the result to your webhook when an async run completes:
+Subconscious POSTs the result to your webhook when an async run completes. The payload contains `result.answer` (string) and optionally `result.reasoning` (array):
 
 ```typescript
 // In convex/http.ts — add this route
@@ -216,25 +216,10 @@ http.route({
     const { runId, status, result } = payload;
 
     if (status === "succeeded") {
-      let answer: string;
-      if (typeof result.answer === "string") {
-        // Structured format: result = { answer, reasoning }
-        answer = result.answer;
-      } else if (result.fullResponse) {
-        // Legacy format: result = { fullResponse: "<JSON string>" }
-        try {
-          const full = JSON.parse(result.fullResponse);
-          answer = full.answer ?? result.fullResponse;
-        } catch {
-          answer = result.fullResponse;
-        }
-      } else {
-        answer = "No answer";
-      }
       await ctx.runMutation(internal.agentRuns.updateRun, {
         runId,
         status: "succeeded",
-        answer,
+        answer: result.answer,
       });
     } else {
       await ctx.runMutation(internal.agentRuns.updateRun, { runId, status });
@@ -256,7 +241,8 @@ http.route({
   "status": "succeeded",
   "engine": "tim-gpt",
   "result": {
-    "fullResponse": "{\"reasoning\": [...], \"answer\": \"The clean text answer\"}"
+    "answer": "The clean text answer",
+    "reasoning": [{ "thought": "...", "conclusion": "..." }]
   },
   "tokens": { "inputTokens": 1980, "outputTokens": 406, "costCents": 0 },
   "createdAt": "2026-03-26T20:06:37.956Z",
@@ -264,7 +250,7 @@ http.route({
 }
 ```
 
-The `result.fullResponse` field is a JSON **string** — parse it to get `.answer` and `.reasoning`. The handler above also supports a forthcoming structured format where `result.answer` is available directly.
+Same structure as the SDK `RunResponse` — `result.answer` is a string, `result.reasoning` is the step-by-step trace. Webhook subscriptions can be configured with `responseContent: "answer_only"` to strip reasoning from the payload.
 
 ## Structured Output with Zod
 
