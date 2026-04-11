@@ -1,15 +1,17 @@
 ---
 name: subconscious-dev
-description: "Build AI agents with Subconscious platform. Use when user wants to: build an agent, create an AI agent, use Subconscious, build with TIM, create agent with tools, research agent, search agent, tool-calling agent, subconscious.dev, TIMRUN, tim, tim-edge, timini, tim-gpt, tim-gpt-heavy. Do NOT use for generic OpenAI/Anthropic/LLM tasks without Subconscious."
+description: "Build AI agents with Subconscious platform. Use when user wants to: build an agent, create an AI agent, use Subconscious, build with TIM, TIMRUN, MCP tools, Model Context Protocol, platform tools (fast_search, web_search), skills, tim-claude, tim-claude-heavy, compound engines, tool-calling agent, create-subconscious-app, subconscious.dev, tim, tim-edge, timini, tim-gpt, tim-gpt-heavy, tim-1.5, tim-oss-local. Do NOT use for generic OpenAI/Anthropic/LLM tasks without Subconscious."
 ---
 
 # Building with Subconscious Platform
 
 Subconscious is a platform for running AI agents with external tool use and long-horizon reasoning. **Key differentiator**: You kick off an agent with a single API call—define goals and tools, Subconscious handles orchestration, context management, and multi-hop reasoning automatically. No multi-agent frameworks needed.
 
+**What is new / expanded recently (monorepo + API):** first-class **MCP** (Model Context Protocol) servers as tools, **TIM-Claude** and **TIM-Claude-Heavy** compound engines, **platform search tools** (`fast_search`, `web_search`, etc.), **skills** (reusable knowledge packages), optional **multimodal `images`**, **`resources`** such as browser automation on compound engines, OSS tool-calling engines (**`tim-oss-local`**, **`tim-1.5`**), and **`npx create-subconscious-app`** to scaffold from official examples.
+
 ## Quick Start
 
-**Use the native Subconscious SDK** (recommended approach):
+**Use the native Subconscious SDK** (recommended approach). **Prefer `tim-claude`** when you want Anthropic Claude–backed compound reasoning; **`tim-gpt`** remains a strong default for OpenAI-backed runs.
 
 ### Python
 
@@ -19,7 +21,7 @@ from subconscious import Subconscious
 client = Subconscious(api_key="your-api-key")  # Get from https://subconscious.dev/platform
 
 run = client.run(
-    engine="tim-gpt",
+    engine="tim-claude",
     input={
         "instructions": "Research quantum computing breakthroughs in 2025",
         "tools": []  # Optional: see Tools section below
@@ -42,7 +44,7 @@ const client = new Subconscious({
 });
 
 const run = await client.run({
-  engine: "tim-gpt",
+  engine: "tim-claude",
   input: {
     instructions: "Research quantum computing breakthroughs in 2025",
     tools: [],  // Optional: see Tools section below
@@ -54,6 +56,16 @@ const run = await client.run({
 const answer = run.result?.answer;  // Clean text response
 console.log(answer);
 ```
+
+### Scaffold from examples
+
+```bash
+npx create-subconscious-app              # interactive
+npx create-subconscious-app my-agent -e e2b_cli
+npx create-subconscious-app --list       # list templates
+```
+
+Pulls the latest official examples (Vercel runner, E2B CLI, Convex app, notebooks, etc.) into a new project.
 
 ## Response Structure
 
@@ -196,57 +208,48 @@ User: ${userMessage}
 Respond to the user's message.`;
 ```
 
-## Skills
-
-Skills are reusable knowledge packages that give agents specialized capabilities. Pass skill names in `input.skills` and the agent loads instructions on demand via progressive disclosure (manifest in system prompt → full instructions via `LoadSkill` tool → reference docs via `ReadSkillReference` tool).
-
-### Python
-
-```python
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Build a REST API with proper error handling",
-        "tools": [{"type": "platform", "id": "web_search"}],
-        "skills": ["api-design", "error-handling"],
-    },
-    options={"await_completion": True},
-)
-```
-
-### Node.js/TypeScript
-
-```typescript
-const run = await client.run({
-  engine: "tim-gpt",
-  input: {
-    instructions: "Build a REST API with proper error handling",
-    tools: [{ type: "platform", id: "web_search" }],
-    skills: ["api-design", "error-handling"],
-  },
-  options: { awaitCompletion: true },
-});
-```
-
-Skills have three visibility levels: `platform` (built-in), `public` (shared), and `org` (private to your team). Browse and create skills at [subconscious.dev/platform/skills](https://www.subconscious.dev/platform/skills). Full CRUD API available under `/v1/skills`.
-
 ## Choosing an Engine
 
-| Engine | API Name | Type | Best For |
-|--------|----------|------|----------|
-| TIM | `tim` | Unified | Flagship unified agent engine for a wide range of tasks |
-| TIM-Edge | `tim-edge` | Unified | Speed, efficiency, search-heavy tasks |
-| TIMINI | `timini` | Compound (Gemini-3 Flash backed) | Long-context and tool use, strong reasoning |
-| TIM-GPT | `tim-gpt` | Compound (GPT-4.1 backed) | Most use cases, good balance of cost/performance |
-| TIM-GPT-Heavy | `tim-gpt-heavy` | Compound (GPT-5.2 backed) | Maximum capability, complex reasoning |
+Public engines (see [subconscious.dev](https://www.subconscious.dev) / platform for live list):
 
-**Recommendation**: Start with `tim-gpt` for most applications.
+| Engine | API name | Type | Notes |
+|--------|----------|------|--------|
+| TIM | `tim` | Unified | Flagship unified agent |
+| TIM-Edge | `tim-edge` | Unified | Efficient; good for search-heavy tasks |
+| TIMINI | `timini` | Compound | Gemini-3 Flash–backed; long context + tools |
+| TIM-GPT | `tim-gpt` | Compound | GPT-4.1–backed; strong general default |
+| TIM-GPT-Heavy | `tim-gpt-heavy` | Compound | GPT-5.2–backed; heavier reasoning |
+| TIM-Claude | `tim-claude` | Compound | Claude Sonnet–backed; great for Claude-style reasoning |
+| TIM-Claude-Heavy | `tim-claude-heavy` | Compound | Claude Opus–backed |
+| TIM-OSS-Local | `tim-oss-local` | Compound | Tool-calling with TIM-trained OSS models |
+| TIM-1.5 | `tim-1.5` | Compound | Tool-calling with larger OSS models (v1.5) |
+
+**Deprecated (still accepted; use replacement):** `tim-small` / `tim-small-preview` → **`tim-edge`**; `tim-large` → **`tim-gpt`**.
+
+**Recommendations:** **`tim-gpt`** or **`tim-claude`** for most API apps (compound = best support for platform tools, MCP, browser resource, etc.). Use **`tim-edge`** / **`tim`** when you want unified TIM on Modal. Use **`tim-gpt-heavy`** / **`tim-claude-heavy`** for hardest tasks.
 
 ## Tools: The Key Differentiator
 
-Subconscious tools are **remote HTTP endpoints**. When the agent needs to use a tool, Subconscious makes an HTTP POST to the URL you specify. This is fundamentally different from OpenAI function calling where YOU handle tool execution in a loop.
+You pass a **`tools`** array on each run. There are three common shapes—**platform** (hosted by Subconscious), **function** (your HTTP endpoints), and **MCP** (remote Model Context Protocol server). Advanced: **`type: "native"`** provider tools (e.g. Anthropic computer use) exist for specific engine integrations; prefer platform/function/MCP unless you know you need native.
 
-### Tool Definition Format
+The agent decides when and how to call tools. You do not run a client-side tool loop for normal function/MCP tools—Subconscious orchestrates execution internally (TIMRUN / compound runtimes).
+
+### Platform tools (no server to host)
+
+Use built-in search and research tools by id (billing applies per your plan):
+
+```python
+tools = [
+    {"type": "platform", "id": "fast_search"},
+    {"type": "platform", "id": "web_search"},
+]
+```
+
+Common ids include `fast_search`, `web_search`, `fresh_search`, `page_reader`, `find_similar`, `people_search`, `company_search`, `news_search`, `tweet_search`, `research_paper_search`, `google_search`. See `references/tools-guide.md` for the full table.
+
+### Function tools (your HTTP endpoints)
+
+When the agent uses a function tool, Subconscious POSTs (or GETs) your URL with JSON parameters—different from OpenAI-style loops where your app executes tools locally.
 
 ```python
 tools = [
@@ -272,12 +275,31 @@ tools = [
 ]
 ```
 
-**Key fields unique to Subconscious:**
-- `url`: The HTTP endpoint Subconscious will call when the agent uses this tool
-- `method`: HTTP method (typically POST)
-- `timeout`: How long to wait for tool response (seconds)
+**Useful extras:** optional **`headers`** and **`defaults`** on function tools—`defaults` merge at call time and are hidden from the model schema (good for API keys and session ids). See Node SDK README patterns.
 
-The agent decides when and how to call tools. You don't manage a tool-call loop. Subconscious handles multi-hop reasoning internally via TIMRUN.
+### MCP tools (Model Context Protocol)
+
+Point at an **HTTP MCP server** URL. Subconscious discovers tools from the server, optionally filters them, and proxies invocations (encrypted auth storage where applicable).
+
+```python
+tools = [
+    {
+        "type": "mcp",
+        "url": "https://your-mcp-host.example/mcp",
+        # Optional: only expose these tool names (case-insensitive). Omit or use ["*"] for all. [] = none.
+        "allowedTools": ["search", "fetch_page"],
+        # Optional auth (stored encrypted server-side):
+        # "auth": {"type": "bearer", "token": "..."},
+        # "auth": {"type": "api_key", "token": "...", "header": "X-Api-Key"},
+    }
+]
+```
+
+**Constraints (important):** MCP integration targets **streamable HTTP / hosted MCP**—not local **stdio** subprocess servers. The server must be reachable from Subconscious (same idea as function tools: use a public URL or tunnel). Multiple MCP servers are supported; duplicate tool names may be prefixed to disambiguate.
+
+Configure and test MCP tools from the **platform UI** (Tools → MCP) as well as from the API.
+
+**TypeScript SDK note:** the wire format uses **`allowedTools`**. If your installed `subconscious` npm types still show `allow`, use **`allowedTools`** in the object you send (or upgrade the SDK when types align).
 
 ### Building a Tool Server
 
@@ -326,6 +348,29 @@ app.listen(8000, () => console.log("Tool server running on :8000"));
 ```
 
 **Important**: Your endpoint must be publicly accessible. For local development, use [ngrok](https://ngrok.com) or [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
+
+## Skills
+
+Attach **named skills** to a run so the agent gets reusable playbooks (progressive disclosure: summary in context, full detail when needed).
+
+```typescript
+const run = await client.run({
+  engine: 'tim-claude',
+  input: {
+    instructions: 'Design a REST API for user notifications',
+    tools: [{ type: 'platform', id: 'web_search' }],
+    skills: ['api-design', 'error-handling'],
+  },
+  options: { awaitCompletion: true },
+});
+```
+
+Browse and author skills on the platform (`/platform/skills`) and in the [Skills docs](https://docs.subconscious.dev/core-concepts/skills).
+
+## Optional run input: `images`, `resources`
+
+- **`images`**: optional array of image inputs (multimodal runs) when supported by the engine—see current API/docs for format (often base64 data URLs handled via upload pipeline).
+- **`resources`**: e.g. **`"browser"`** for browser automation—**only on compound engines** (`tim-gpt`, `tim-claude`, etc.), not on unified `tim` / `tim-edge` alone. If you pass unsupported combinations, the API returns a validation error.
 
 ## Structured Output
 
@@ -647,49 +692,6 @@ answer = status.result.answer
 ### Streaming (Advanced)
 
 See `references/examples.md` for streaming examples. **Note**: Streaming returns raw JSON, not clean text.
-
-## Webhooks
-
-Get a POST when runs complete instead of polling.
-
-### Per-Run Callback
-
-Pass `callbackUrl` in the `output` field:
-
-```python
-run = client.run(
-    engine="tim-gpt",
-    input={"instructions": "Long-running analysis"},
-    output={"callbackUrl": "https://your-server.com/webhook"}
-)
-```
-
-```typescript
-const run = await client.run({
-  engine: 'tim-gpt',
-  input: { instructions: 'Long-running analysis' },
-  output: { callbackUrl: 'https://your-server.com/webhook' },
-});
-```
-
-### Org-Wide Subscriptions
-
-Subscribe to webhooks for **all** runs via `POST /v1/webhooks/subscriptions`:
-
-```bash
-curl -X POST https://api.subconscious.dev/v1/webhooks/subscriptions \
-  -H "Authorization: Bearer $SUBCONSCIOUS_API_KEY" \
-  -d '{"callbackUrl":"https://your-server.com/webhook","eventTypes":["job.succeeded","job.failed"],"secret":"signing-secret"}'
-```
-
-Features:
-- **Event filtering**: `job.succeeded`, `job.failed`
-- **Enable/disable**: pause deliveries without deleting config
-- **HMAC-SHA256 signing**: verify payloads with `X-Webhook-Signature` header when a secret is set
-- **Delivery log**: view history + payloads in the [dashboard](https://www.subconscious.dev/platform/webhooks)
-- **SQS-backed**: retries with exponential backoff, dead-letter queue
-
-Both per-run `callbackUrl` and org subscriptions can fire for the same run.
 
 ## SDK Methods Reference
 
@@ -1037,7 +1039,7 @@ See `references/streaming-and-reasoning.md` for complete implementation.
 5. **Tools must be publicly accessible** - Use ngrok for local development
 6. **Response has `result.answer`** - The clean text is in `result.answer`, not `result.content`
 7. **Reasoning field is optional** - Contains internal steps, useful for debugging
-8. **Engine names**: Use `tim`, `tim-edge`, `timini`, `tim-gpt`, `tim-gpt-heavy`
+8. **Engine names**: Use `tim`, `tim-edge`, `timini`, `tim-gpt`, `tim-gpt-heavy`, `tim-claude`, `tim-claude-heavy`, `tim-oss-local`, `tim-1.5` (avoid deprecated `tim-small`, `tim-large`)
 9. **Streaming shows raw JSON** - You must parse `{"reasoning": [...], "answer": "..."}` yourself. For simple chat, use `run()` instead.
 10. **`tools: []` is required** - Even if you have no tools, pass an empty array.
 11. **No system message field** - Prepend system prompt to your instructions string.
@@ -1086,8 +1088,10 @@ For detailed information, see:
 - `references/streaming-and-reasoning.md` - **CRITICAL**: How to stream and display reasoning steps (solves the raw JSON problem)
 - `references/typescript-types.md` - Complete TypeScript type definitions
 - `references/error-handling.md` - Error handling patterns and best practices
-- `references/tools-guide.md` - Deep dive on tool system
+- `references/tools-guide.md` - Platform tools table, function tools, **MCP** (auth, `allowedTools`, HTTP-only constraints)
 - `references/examples.md` - Complete working examples including Next.js and reasoning display
+
+**Internal monorepo** (`subconscious-monorepo`): engine catalog in `packages/common/engines.ts`; MCP proxy/discovery under `apps/api/src/endpoints/mcp/`; MCP setup skill at `.claude/skills/mcp-builder/` for building compliant servers.
 
 ## Resources
 
