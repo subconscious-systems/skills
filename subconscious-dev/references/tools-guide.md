@@ -4,16 +4,16 @@ Complete guide to building and using tools with Subconscious.
 
 ## How Subconscious Tools Work
 
-**Key Difference from OpenAI**: Subconscious tools are **remote HTTP endpoints**. When the agent needs to use a tool, Subconscious makes an HTTP POST (or GET) to the URL you specify. You don't manage a tool-execution loop—Subconscious handles it internally.
+**Key difference from OpenAI-style client loops**: You declare **platform** tools (Subconscious-hosted), **function** tools (your HTTP endpoints), and/or **MCP** tools (hosted Model Context Protocol servers). Subconscious resolves them server-side and runs multi-hop tool use internally—you are not responsible for iterating tool calls in your app for these types.
 
-### The Flow
+### The Flow (function tools)
 
-1. You define tools with `url` fields pointing to your endpoints
-2. Agent decides when to use tools based on the task
-3. Subconscious makes HTTP requests to your endpoints
-4. Your endpoints return JSON responses
-5. Subconscious injects tool results into context and continues reasoning
-6. Agent can chain multiple tool calls automatically (multi-hop reasoning)
+1. You define tools with `url` fields pointing to your endpoints (or pass MCP / platform entries)
+2. The agent decides when to use tools based on the task
+3. Subconscious invokes tools (HTTP to your server, or MCP proxy, or internal platform endpoints)
+4. Tool results return as JSON and feed back into the run
+5. Subconscious injects results into context and continues reasoning
+6. The agent can chain multiple tool calls automatically (multi-hop reasoning)
 
 ## Tool Definition Schema
 
@@ -86,6 +86,33 @@ tools: [
   { type: "platform", id: "page_reader" },
 ]
 ```
+
+## MCP tools (Model Context Protocol)
+
+Connect a **hosted MCP server** over HTTP. Subconscious calls `tools/list` on your server, converts each tool into an internal function tool with a proxy URL, and executes tool calls through the MCP invoke path. **STDIO-only local MCP servers are not supported** from the API—you need a reachable HTTP MCP endpoint (tunnel with ngrok/Cloudflare in dev).
+
+### Shape
+
+```json
+{
+  "type": "mcp",
+  "url": "https://your-server.example/mcp",
+  "allowedTools": ["tool_a", "tool_b"],
+  "auth": { "type": "bearer", "token": "..." }
+}
+```
+
+- **`url`**: MCP server HTTP entrypoint (required).
+- **`allowedTools`**: Optional list of tool names to expose (case-insensitive). **Omit** or include **`"*"`** to allow all discovered tools. **`[]`** explicitly exposes **no** tools (useful to disable without removing the entry).
+- **`auth`**: Optional. `{ "type": "bearer", "token": "..." }` sends `Authorization: Bearer …`, or `{ "type": "api_key", "token": "…", "header": "X-Api-Key" }` for custom header auth. Sensitive values are encrypted at rest for org-owned tool configs.
+
+### Combining with other tools
+
+You can mix **platform**, **function**, and **mcp** entries in the same `tools` array. If two MCP servers expose the same tool name, the API may prefix names (e.g. `hostname__toolname`) to avoid collisions.
+
+### Platform UI
+
+Create and manage MCP tools (discovery, auth, allowed tool picker) from **subconscious.dev → Platform → Tools** in addition to passing them in run JSON.
 
 ## Function Tools
 
