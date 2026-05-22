@@ -1,1105 +1,320 @@
 ---
 name: subconscious-dev
-description: "Build AI agents with Subconscious platform. Use when user wants to: build an agent, create an AI agent, use Subconscious, build with TIM, TIMRUN, MCP tools, Model Context Protocol, platform tools (fast_search, web_search), skills, tim-claude, tim-claude-heavy, compound engines, tool-calling agent, create-subconscious-app, subconscious.dev, tim, tim-edge, timini, tim-gpt, tim-gpt-heavy, tim-1.5, tim-oss-local. Do NOT use for generic OpenAI/Anthropic/LLM tasks without Subconscious."
+description: "Write code against the Subconscious API. Use when the user wants to: call the Subconscious API, use the OpenAI SDK with Subconscious, use tim-qwen3.6-27b, use api.subconscious.dev, build a chat app on Subconscious, configure thinking / enable_thinking, structured output via response_format, OpenAI function tools, stream chat completions. Do NOT use for OpenAI/Anthropic-only tasks unrelated to Subconscious."
 ---
 
-# Building with Subconscious Platform
+# Subconscious chat completions
 
-Subconscious is a platform for running AI agents with external tool use and long-horizon reasoning. **Key differentiator**: You kick off an agent with a single API call—define goals and tools, Subconscious handles orchestration, context management, and multi-hop reasoning automatically. No multi-agent frameworks needed.
+Subconscious is OpenAI-SDK-compatible inference on a fine-tuned Qwen-3.6 served via **sglang**. You point an OpenAI client at our base URL; it works with standard OpenAI fields plus one knob for reasoning.
 
-**What is new / expanded recently (monorepo + API):** first-class **MCP** (Model Context Protocol) servers as tools, **TIM-Claude** and **TIM-Claude-Heavy** compound engines, **platform search tools** (`fast_search`, `web_search`, etc.), **skills** (reusable knowledge packages), optional **multimodal `images`**, **`resources`** such as browser automation on compound engines, OSS tool-calling engines (**`tim-oss-local`**, **`tim-1.5`**), and **`npx create-subconscious-app`** to scaffold from official examples.
-
-## Quick Start
-
-**Use the native Subconscious SDK** (recommended approach). **Prefer `tim-claude`** when you want Anthropic Claude–backed compound reasoning; **`tim-gpt`** remains a strong default for OpenAI-backed runs.
-
-### Python
+## The whole product, in 6 lines
 
 ```python
-from subconscious import Subconscious
+from openai import OpenAI
 
-client = Subconscious(api_key="your-api-key")  # Get from https://subconscious.dev/platform
-
-run = client.run(
-    engine="tim-claude",
-    input={
-        "instructions": "Research quantum computing breakthroughs in 2025",
-        "tools": []  # Optional: see Tools section below
-    },
-    options={"await_completion": True}
+client = OpenAI(
+    base_url="https://api.subconscious.dev/v1",
+    api_key="sky_...",  # or set SUBCONSCIOUS_API_KEY
 )
 
-# Extract the answer for display
-answer = run.result.answer  # Clean text response
-print(answer)
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Hello"}],
+)
 ```
 
-### Node.js/TypeScript
+That's the entire surface. The rest of this doc is about doing it well.
 
-```typescript
-import { Subconscious } from "subconscious";
+## Critical context — read first
 
-const client = new Subconscious({
-  apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-});
+1. **One base URL.** `https://api.subconscious.dev/v1`. Inference is served via **sglang** behind a Baseten gateway. Endpoints: `POST /chat/completions` (primary), `POST /completions` (legacy OpenAI text completions), `GET /models`. `POST /v1/responses` exists in URL-space but is not functional — returns sglang errors for every input shape.
+2. **One model.** `subconscious/tim-qwen3.6-27b` — fine-tuned Qwen-3.6, fp8 quantization. Get its full capability spec from `GET /v1/models` (yes, that endpoint exists).
+3. **Context: millions of tokens** per the public dashboard / TIMRUN positioning. The `/v1/models` endpoint currently reports `context_length: 8192` and `max_completion_tokens: 5000` — treat that as the safe-bet runtime limit at this deployment, not the product ceiling. When the dashboard and the API response disagree, **default to the dashboard's claim and verify on your workload**.
+4. **Modalities are text-first**: model spec says `input_modalities: ["text"]`, but **vision actually works** in practice for many image sources (placeholders, data URLs). Wikipedia URLs consistently 500. Audio, file, and video blocks all return 400. See `references/multimodal.md` for full coverage — treat vision as undocumented-but-functional, not officially supported.
+5. **Thinking is ON by default.** When on, the model prepends a "Here's a thinking process:" prose block to the answer (no `<think>` tags — just plain text). Opt out by setting `chat_template_kwargs.enable_thinking: false`. This is inverted from OpenAI / ChatGPT.
+6. **Only `temperature` and `stop` are honored as sampling parameters** per the model spec. Other fields like `top_p`, `seed`, `n`, `frequency_penalty`, `logit_bias`, etc. return 200 but Baseten / sglang silently drops them.
 
-const run = await client.run({
-  engine: "tim-claude",
-  input: {
-    instructions: "Research quantum computing breakthroughs in 2025",
-    tools: [],  // Optional: see Tools section below
-  },
-  options: { awaitCompletion: true },
-});
-
-// Extract the answer for display
-const answer = run.result?.answer;  // Clean text response
-console.log(answer);
-```
-
-### Scaffold from examples
+## Config
 
 ```bash
-npx create-subconscious-app              # interactive
-npx create-subconscious-app my-agent -e e2b_cli
-npx create-subconscious-app --list       # list templates
+# .env
+SUBCONSCIOUS_API_KEY=sky_yNZq...
 ```
 
-Pulls the latest official examples (Vercel runner, E2B CLI, Convex app, notebooks, etc.) into a new project.
+The OpenAI SDK reads `OPENAI_API_KEY` by default — pass `api_key=` explicitly, or set `OPENAI_API_KEY` to your Subconscious key. **Don't** ship a real OpenAI key against our base URL.
 
-## Response Structure
+## Auth
 
-**Critical**: The Subconscious SDK returns a different structure than OpenAI:
+```
+Authorization: Bearer <SUBCONSCIOUS_API_KEY>
+```
 
-```typescript
+| Scenario | Status |
+|---|---|
+| No `Authorization` header at all | 401 |
+| Header present but key invalid | 403 |
+| Valid key | 200 |
+
+## What the model honors
+
+The dashboard markets `TIM-Qwen3.6-27B` with:
+- **Millions of tokens of context**
+- **Frontier-grade agent performance**
+- **75% of base-model compute**
+- **50% faster sustained throughput**
+
+These are the product-level claims — treat them as canonical.
+
+`GET /v1/models` returns the current runtime snapshot, which is narrower:
+
+```json
 {
-  runId: "run_abc123...",
-  status: "succeeded",
-  result: {
-    answer: "The clean text response for display",  // ← Use this for chat UIs
-    reasoning: [  // Optional: step-by-step reasoning
-      {
-        title: "Step 1",
-        thought: "I need to search for...",
-        conclusion: "Found relevant information"
-      }
-    ]
-  },
-  usage: {
-    inputTokens: 1234,
-    outputTokens: 567,
-    durationMs: 45000
-  }
+  "id": "subconscious/tim-qwen3.6-27b",
+  "context_length": 8192,
+  "max_completion_tokens": 5000,
+  "quantization": "fp8",
+  "supported_sampling_parameters": ["temperature", "stop"],
+  "supported_features": ["tools", "json_mode", "structured_outputs", "reasoning"],
+  "input_modalities": ["text"],
+  "output_modalities": ["text"]
 }
 ```
 
-**For chat UIs, always use `run.result?.answer`** - this is the clean text response. The `reasoning` field contains internal reasoning steps (useful for debugging but not for display).
+Standard OpenAI request fields that **do affect output**:
 
-## Simple Chat Example (No Tools)
+| Field | Notes |
+|---|---|
+| `model` | Required. `subconscious/tim-qwen3.6-27b`. |
+| `messages` | Required. Roles: `system` / `user` / `assistant` / `tool`. `developer` and `function` (deprecated) roles return 400. String content. |
+| `temperature` | Honored. Verified: `temperature: 0` produces identical outputs across calls. |
+| `stop` | Honored. Array of stop sequences. Sets `finish_reason: "stop"`. |
+| `max_tokens` / `max_completion_tokens` | Hard cap; verified to truncate. Max 5000. |
+| `n` | Honored — returns `n` choices from one batched call. |
+| `stream` | SSE when true. |
+| `stream_options` | `{include_usage: true}` emits a final usage chunk. |
+| `tools` | Standard OpenAI `function` tools only. Newer `custom` tool type returns 400. |
+| `tool_choice` | All four modes work: `"auto"` (default), `"none"`, `"required"`, `{type: "function", function: {name}}`. |
+| `response_format` | Both `json_schema` and `json_object` modes work. |
+| `reasoning_effort` | Enum-validated: `none` / `low` / `medium` / `high` accepted. `minimal` and `xhigh` return 400. Effect on output unverified — this is a Qwen model, not an o-series reasoner. |
 
-For conversational chat without tools:
+**Accepted but silently dropped / probably ignored** (verified to return 200; not in the model's `supported_sampling_parameters`):
 
-### Python
+- Sampling: `top_p`, `top_k`, `seed`, `frequency_penalty`, `presence_penalty`, `logit_bias`, `logprobs`, `top_logprobs`, `parallel_tool_calls`
+- Identity / caching: `user`, `safety_identifier`, `prompt_cache_key`, `prompt_cache_retention`, `service_tier` (any of `auto` / `default` / `flex` / `priority`)
+- Storage: `store`, `metadata`
+- Output config: `modalities` (this field controls OUTPUT modalities — `["text", "audio"]` etc. — and the model only outputs text, so audio output isn't produced; **input** vision via `image_url` content blocks is a separate thing that DOES work — see `references/multimodal.md`), `audio` (audio-output voice/format config — no audio output), `verbosity`, `prediction`, `web_search_options`
+- Deprecated: `function_call`, `functions` (use `tool_choice` and `tools` instead)
+
+If your app depends on any of these to actually affect behavior, that won't work on Subconscious.
+
+**Rejected with 400:**
+
+- Custom tool type (`{type: "custom", ...}`) — only `function` tools work
+- `developer` role messages
+- `function` role messages (deprecated)
+- `reasoning_effort=minimal` and `reasoning_effort=xhigh` (the other 4 enum values pass schema validation)
+
+## The one Subconscious-specific knob: `chat_template_kwargs.enable_thinking`
+
+Pass via the OpenAI SDK's `extra_body`:
 
 ```python
-from subconscious import Subconscious
-
-client = Subconscious(api_key="your-api-key")
-
-# Convert message history to instructions format
-messages = [
-    {"role": "user", "content": "Hello!"},
-    {"role": "assistant", "content": "Hi there! How can I help?"},
-    {"role": "user", "content": "Tell me about quantum computing"}
-]
-
-# Convert to instructions string
-instructions = "\n\n".join([
-    f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
-    for m in messages
-]) + "\n\nRespond to the user's latest message."
-
-run = client.run(
-    engine="tim-gpt",
-    input={"instructions": instructions, "tools": []},
-    options={"await_completion": True}
-)
-
-print(run.result.answer)  # Clean text response
-```
-
-### Node.js/TypeScript
-
-```typescript
-import { Subconscious } from "subconscious";
-
-const client = new Subconscious({
-  apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-});
-
-const messages = [
-  { role: "user", content: "Hello!" },
-  { role: "assistant", content: "Hi there! How can I help?" },
-  { role: "user", content: "Tell me about quantum computing" }
-];
-
-// Convert to instructions string
-const instructions = messages
-  .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
-  .join("\n\n") + "\n\nRespond to the user's latest message.";
-
-const run = await client.run({
-  engine: "tim-gpt",
-  input: { instructions, tools: [] },
-  options: { awaitCompletion: true },
-});
-
-console.log(run.result?.answer);  // Clean text response
-```
-
-## Instructions Format vs Messages
-
-**Important**: Subconscious uses `instructions` (single string), not `messages` array like OpenAI.
-
-- **OpenAI format**: `messages: [{role: "user", content: "..."}]`
-- **Subconscious format**: `input: {instructions: "..."}` (single string)
-
-### Converting Messages to Instructions
-
-```typescript
-function buildInstructions(
-  systemPrompt: string,
-  messages: Array<{role: string; content: string}>
-): string {
-  const conversation = messages
-    .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
-    .join("\n\n");
-
-  return `${systemPrompt}
-
-## Conversation History
-
-${conversation}
-
-## Instructions
-
-Respond to the user's latest message.`;
+extra_body={
+    "chat_template_kwargs": {"enable_thinking": False},
 }
-
-// Usage
-const instructions = buildInstructions(
-  "You are a helpful coding assistant. Be concise and use code examples.",
-  messages
-);
 ```
 
-### System Prompts
+- **Default (on)**: model emits a meta-reasoning preamble starting with something like "Here's a thinking process:" followed by numbered steps, then the actual answer. No tags wrap it — it's all plain prose in `message.content`.
+- **`enable_thinking: false`**: model skips the preamble and answers directly.
 
-Subconscious doesn't have a separate `system` field. Prepend your system prompt to the instructions:
+For most user-facing chat / structured-output cases you'll want `false`. See `references/thinking.md`.
 
-```typescript
-const systemPrompt = "You are a helpful assistant. Always be concise.";
-const userMessage = "Explain quantum computing";
+`stream_options.include_usage: true` is also useful when streaming — that field IS standard OpenAI, not Subconscious-specific.
 
-const instructions = `${systemPrompt}
+## Tools — standard OpenAI function calling
 
-User: ${userMessage}
-
-Respond to the user's message.`;
-```
-
-## Choosing an Engine
-
-Public engines (see [subconscious.dev](https://www.subconscious.dev) / platform for live list):
-
-| Engine | API name | Type | Notes |
-|--------|----------|------|--------|
-| TIM | `tim` | Unified | Flagship unified agent |
-| TIM-Edge | `tim-edge` | Unified | Efficient; good for search-heavy tasks |
-| TIMINI | `timini` | Compound | Gemini-3 Flash–backed; long context + tools |
-| TIM-GPT | `tim-gpt` | Compound | GPT-4.1–backed; strong general default |
-| TIM-GPT-Heavy | `tim-gpt-heavy` | Compound | GPT-5.2–backed; heavier reasoning |
-| TIM-Claude | `tim-claude` | Compound | Claude Sonnet–backed; great for Claude-style reasoning |
-| TIM-Claude-Heavy | `tim-claude-heavy` | Compound | Claude Opus–backed |
-| TIM-OSS-Local | `tim-oss-local` | Compound | Tool-calling with TIM-trained OSS models |
-| TIM-1.5 | `tim-1.5` | Compound | Tool-calling with larger OSS models (v1.5) |
-
-**Deprecated (still accepted; use replacement):** `tim-small` / `tim-small-preview` → **`tim-edge`**; `tim-large` → **`tim-gpt`**.
-
-**Recommendations:** **`tim-gpt`** or **`tim-claude`** for most API apps (compound = best support for platform tools, MCP, browser resource, etc.). Use **`tim-edge`** / **`tim`** when you want unified TIM on Modal. Use **`tim-gpt-heavy`** / **`tim-claude-heavy`** for hardest tasks.
-
-## Tools: The Key Differentiator
-
-You pass a **`tools`** array on each run. There are three common shapes—**platform** (hosted by Subconscious), **function** (your HTTP endpoints), and **MCP** (remote Model Context Protocol server). Advanced: **`type: "native"`** provider tools (e.g. Anthropic computer use) exist for specific engine integrations; prefer platform/function/MCP unless you know you need native.
-
-The agent decides when and how to call tools. You do not run a client-side tool loop for normal function/MCP tools—Subconscious orchestrates execution internally (TIMRUN / compound runtimes).
-
-### Platform tools (no server to host)
-
-Use built-in search and research tools by id (billing applies per your plan):
+Only the standard OpenAI tool shape works:
 
 ```python
-tools = [
-    {"type": "platform", "id": "fast_search"},
-    {"type": "platform", "id": "web_search"},
-]
-```
-
-Common ids include `fast_search`, `web_search`, `fresh_search`, `page_reader`, `find_similar`, `people_search`, `company_search`, `news_search`, `tweet_search`, `research_paper_search`, `google_search`. See `references/tools-guide.md` for the full table.
-
-### Function tools (your HTTP endpoints)
-
-When the agent uses a function tool, Subconscious POSTs (or GETs) your URL with JSON parameters—different from OpenAI-style loops where your app executes tools locally.
-
-```python
-tools = [
-    {
-        "type": "function",
-        "name": "SearchTool",
-        "description": "a general search engine returns title, url, and description of 10 webpages",
-        "url": "https://your-server.com/search",  # YOUR hosted endpoint
-        "method": "POST",
-        "timeout": 10,  # seconds
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get current weather in a city",
         "parameters": {
             "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "A natural language query for the search engine."
-                }
-            },
-            "required": ["query"],
-            "additionalProperties": False
-        }
-    }
-]
-```
-
-**Useful extras:** optional **`headers`** and **`defaults`** on function tools—`defaults` merge at call time and are hidden from the model schema (good for API keys and session ids). See Node SDK README patterns.
-
-### MCP tools (Model Context Protocol)
-
-Point at an **HTTP MCP server** URL. Subconscious discovers tools from the server, optionally filters them, and proxies invocations (encrypted auth storage where applicable).
-
-```python
-tools = [
-    {
-        "type": "mcp",
-        "url": "https://your-mcp-host.example/mcp",
-        # Optional: only expose these tool names (case-insensitive). Omit or use ["*"] for all. [] = none.
-        "allowedTools": ["search", "fetch_page"],
-        # Optional auth (stored encrypted server-side):
-        # "auth": {"type": "bearer", "token": "..."},
-        # "auth": {"type": "api_key", "token": "...", "header": "X-Api-Key"},
-    }
-]
-```
-
-**Constraints (important):** MCP integration targets **streamable HTTP / hosted MCP**—not local **stdio** subprocess servers. The server must be reachable from Subconscious (same idea as function tools: use a public URL or tunnel). Multiple MCP servers are supported; duplicate tool names may be prefixed to disambiguate.
-
-Configure and test MCP tools from the **platform UI** (Tools → MCP) as well as from the API.
-
-**TypeScript SDK note:** the wire format uses **`allowedTools`**. If your installed `subconscious` npm types still show `allow`, use **`allowedTools`** in the object you send (or upgrade the SDK when types align).
-
-### Building a Tool Server
-
-Your tool endpoint receives POST requests with parameters as JSON and returns JSON results.
-
-**FastAPI (Python):**
-```python
-from fastapi import FastAPI
-from pydantic import BaseModel
-
-app = FastAPI()
-
-class SearchRequest(BaseModel):
-    query: str
-
-@app.post("/search")
-async def search(req: SearchRequest):
-    # Your search logic here
-    return {
-        "results": [
-            {"title": "Result 1", "url": "https://example.com/1", "description": "..."}
-        ]
-    }
-
-# Run with: uvicorn server:app --host 0.0.0.0 --port 8000
-```
-
-**Express.js (Node.js):**
-```typescript
-import express from "express";
-
-const app = express();
-app.use(express.json());
-
-app.post("/search", (req, res) => {
-  const { query } = req.body;
-  // Your search logic here
-  res.json({
-    results: [
-      { title: "Result 1", url: "https://example.com/1", description: "..." }
-    ]
-  });
-});
-
-app.listen(8000, () => console.log("Tool server running on :8000"));
-```
-
-**Important**: Your endpoint must be publicly accessible. For local development, use [ngrok](https://ngrok.com) or [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
-
-## Skills
-
-Attach **named skills** to a run so the agent gets reusable playbooks (progressive disclosure: summary in context, full detail when needed).
-
-```typescript
-const run = await client.run({
-  engine: 'tim-claude',
-  input: {
-    instructions: 'Design a REST API for user notifications',
-    tools: [{ type: 'platform', id: 'web_search' }],
-    skills: ['api-design', 'error-handling'],
-  },
-  options: { awaitCompletion: true },
-});
-```
-
-Browse and author skills on the platform (`/platform/skills`) and in the [Skills docs](https://docs.subconscious.dev/core-concepts/skills).
-
-## Optional run input: `images`, `resources`
-
-- **`images`**: optional array of image inputs (multimodal runs) when supported by the engine—see current API/docs for format (often base64 data URLs handled via upload pipeline).
-- **`resources`**: e.g. **`"browser"`** for browser automation—**only on compound engines** (`tim-gpt`, `tim-claude`, etc.), not on unified `tim` / `tim-edge` alone. If you pass unsupported combinations, the API returns a validation error.
-
-## Structured Output
-
-Structured output allows you to define the exact shape of the agent's response using JSON Schema. This ensures you receive data in a predictable, parseable format.
-
-### When to Use Structured Output
-
-Use structured output when you need:
-- Responses that integrate with other systems
-- Consistent data formats for downstream processing
-- Type-safe responses in your application
-
-### Using answerFormat
-
-The `answerFormat` field accepts a JSON Schema that defines the structure of the agent's answer:
-
-**Python:**
-```python
-from subconscious import Subconscious
-
-client = Subconscious(api_key="your-api-key")
-
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Analyze the sentiment of this review: 'Great product, fast shipping!'",
-        "tools": [],
-        "answerFormat": {
-            "type": "object",
-            "title": "SentimentAnalysis",
-            "properties": {
-                "sentiment": {
-                    "type": "string",
-                    "enum": ["positive", "negative", "neutral"],
-                    "description": "The overall sentiment"
-                },
-                "confidence": {
-                    "type": "number",
-                    "description": "Confidence score from 0 to 1"
-                },
-                "keywords": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Key phrases that influenced the sentiment"
-                }
-            },
-            "required": ["sentiment", "confidence", "keywords"]
-        }
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
     },
-    options={"await_completion": True},
+}]
+
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Weather in Boston?"}],
+    tools=tools,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
 )
 
-# Response is already a dict matching your schema - no parsing needed
-result = run.result.answer
-print(result["sentiment"])   # "positive"
-print(result["confidence"])  # 0.95
-print(result["keywords"])     # ["Great product", "fast shipping"]
+tool_calls = resp.choices[0].message.tool_calls
+# [{ id: "call_...", function: { name: "get_weather", arguments: '{"city":"Boston"}' } }]
 ```
 
-**Node.js/TypeScript:**
-```typescript
-import { Subconscious } from "subconscious";
+The model emits a `tool_calls` array; your code executes the function, then sends a follow-up message with `role: "tool"` containing the result. Standard OpenAI tool loop — Subconscious does **not** execute tools server-side here.
 
-const client = new Subconscious({
+Subconscious-specific tool types (`type: "platform"`, MCP, URL-based function tools) are **not supported** on this endpoint — they return 400 with a missing-`function` validation error.
+
+## Structured output
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        "sentiment": {"type": "string", "enum": ["positive", "neutral", "negative"]},
+        "confidence": {"type": "number"},
+    },
+    "required": ["sentiment", "confidence"],
+}
+
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Analyze: 'works great'"}],
+    response_format={
+        "type": "json_schema",
+        "json_schema": {"name": "sentiment", "schema": schema},
+    },
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+import json
+result = json.loads(resp.choices[0].message.content)
+```
+
+`json_mode` and `structured_outputs` are both in `supported_features`. When `enable_thinking: false`, you get clean JSON; with thinking on, you'll have to strip the prose preamble before parsing.
+
+## Streaming
+
+```python
+stream = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Haiku about Boston."}],
+    stream=True,
+    stream_options={"include_usage": True},
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+
+for chunk in stream:
+    delta = chunk.choices[0].delta if chunk.choices else None
+    if delta and delta.content:
+        print(delta.content, end="", flush=True)
+    if chunk.usage:
+        print(f"\n[in={chunk.usage.prompt_tokens} out={chunk.usage.completion_tokens}]")
+```
+
+The final chunk before `[DONE]` carries `usage` when `include_usage: true` is set. Standard OpenAI SSE format.
+
+## Status codes
+
+| Status | Meaning | What to do |
+|---|---|---|
+| 200 | OK | Read body |
+| 400 | Malformed body (missing required field, wrong tool shape) | Fix request |
+| 401 | No auth header | Add `Authorization: Bearer ...` |
+| 403 | Invalid API key | Check `SUBCONSCIOUS_API_KEY` |
+| 404 | Unknown model | Use `subconscious/tim-qwen3.6-27b` |
+| 429 | Rate limited | Back off, honor `Retry-After` |
+| 500 | Server / upstream error | Retry with exponential backoff |
+
+Error body shapes:
+
+```json
+// sglang validation error
+{"error": {"code": 400, "message": "...", "object": "error", "param": null, "type": "Bad Request"}}
+
+// Simpler errors (auth, missing model)
+{"error": "string"}
+```
+
+The OpenAI SDK raises typed exceptions (`AuthenticationError`, `RateLimitError`, `BadRequestError`, etc.) — prefer those over parsing the body.
+
+## Best practices
+
+- **Default `enable_thinking: false` for chat / structured / classification.** Cuts latency dramatically; cleaner output.
+- **Leave `enable_thinking: true` for hard reasoning** (research synthesis, code generation, planning).
+- **Set `max_tokens` on every call.** No hard server default; runaway generations cost money.
+- **Use `stream=True`** for any user-facing surface > 1s perceived latency.
+- **Add `stream_options.include_usage: true`** on streamed calls to track cost.
+- **Don't depend on `top_p`, `seed`, `frequency_penalty`, etc.** They return 200 but aren't honored.
+- **Bound message history reasonably.** Dashboard claims millions of tokens; `/v1/models` reports 8192 at this deployment. Test the size you actually need — long prompts can silently truncate.
+- **Vision works but is undocumented.** Data URLs (`data:image/png;base64,...`) are the reliable path; Wikipedia URLs always 500. Audio/file/video definitely don't work (400/500). See `references/multimodal.md`.
+
+## TypeScript / Node
+
+```typescript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'https://api.subconscious.dev/v1',
   apiKey: process.env.SUBCONSCIOUS_API_KEY!,
 });
 
-const run = await client.run({
-  engine: "tim-gpt",
-  input: {
-    instructions: "Analyze the sentiment of this review: 'Great product, fast shipping!'",
-    tools: [],
-    answerFormat: {
-      type: "object",
-      title: "SentimentAnalysis",
-      properties: {
-        sentiment: {
-          type: "string",
-          enum: ["positive", "negative", "neutral"],
-          description: "The overall sentiment"
-        },
-        confidence: {
-          type: "number",
-          description: "Confidence score from 0 to 1"
-        },
-        keywords: {
-          type: "array",
-          items: { type: "string" },
-          description: "Key phrases that influenced the sentiment"
-        }
-      },
-      required: ["sentiment", "confidence", "keywords"]
-    }
-  },
-  options: { awaitCompletion: true },
-});
-
-// Response is already an object matching your schema - no parsing needed
-const result = run.result?.answer;
-console.log(result.sentiment);   // "positive"
-console.log(result.confidence);  // 0.95
-console.log(result.keywords);     // ["Great product", "fast shipping"]
-```
-
-**Important**: When using `answerFormat`, `run.result.answer` returns a **parsed object** (dict in Python, object in JavaScript), not a JSON string. You can access fields directly without parsing.
-
-### Using Pydantic Models (Python)
-
-The Python SDK automatically converts Pydantic models to JSON Schema:
-
-```python
-from subconscious import Subconscious
-from pydantic import BaseModel
-
-class SentimentAnalysis(BaseModel):
-    sentiment: str
-    confidence: float
-    keywords: list[str]
-
-client = Subconscious(api_key="your-api-key")
-
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Analyze the sentiment of: 'Great product!'",
-        "answerFormat": SentimentAnalysis,  # Pass the class directly
-    },
-    options={"await_completion": True},
-)
-
-print(run.result.answer["sentiment"])
-```
-
-### Using Zod (Node.js/TypeScript)
-
-For TypeScript, we recommend using [Zod](https://zod.dev) to define your schema:
-
-```typescript
-import { z } from 'zod';
-import { Subconscious, zodToJsonSchema } from 'subconscious';
-
-const AnalysisSchema = z.object({
-  summary: z.string().describe('A brief summary of the findings'),
-  keyPoints: z.array(z.string()).describe('Main takeaways'),
-  sentiment: z.enum(['positive', 'neutral', 'negative']),
-  confidence: z.number().describe('Confidence score from 0 to 1'),
-});
-
-const client = new Subconscious({
-  apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-});
-
-const run = await client.run({
-  engine: 'tim-gpt',
-  input: {
-    instructions: 'Analyze the latest news about electric vehicles',
-    tools: [{ type: 'platform', id: 'fast_search' }],
-    answerFormat: zodToJsonSchema(AnalysisSchema, 'Analysis'),
-  },
-  options: { awaitCompletion: true },
-});
-
-// Result is typed according to your schema
-const result = run.result?.answer as z.infer<typeof AnalysisSchema>;
-console.log(result.summary);
-console.log(result.keyPoints);
-```
-
-### Structured Reasoning (Optional)
-
-You can also structure the reasoning output using `reasoningFormat`:
-
-```typescript
-const ReasoningSchema = z.object({
-  steps: z.array(z.object({
-    thought: z.string(),
-    action: z.string(),
-  })),
-  conclusion: z.string(),
-});
-
-const run = await client.run({
-  engine: 'tim-gpt',
-  input: {
-    instructions: 'Research and analyze a topic',
-    tools: [],
-    reasoningFormat: zodToJsonSchema(ReasoningSchema, 'Reasoning'),
-  },
-  options: { awaitCompletion: true },
-});
-
-const reasoning = run.result?.reasoning;  // Structured reasoning
-```
-
-### Schema Requirements
-
-- Must be valid JSON Schema
-- Use `type: "object"` for structured responses
-- Include `title` field for better results
-- Define `properties` for each field
-- Use `required` array for mandatory fields
-- Set `additionalProperties: false` to prevent extra fields
-
-See `references/api-reference.md` for more details on structured output.
-
-## run() vs stream() - Critical Difference
-
-### Use `run()` for Chat UIs (Recommended)
-
-**Method**: `run({ options: { awaitCompletion: true } })`  
-**Behavior**: Waits for completion, returns clean answer  
-**What you get**: `run.result?.answer` = clean text for display  
-**Best for**: Chat UIs, simple responses, production apps
-
-```typescript
-const run = await client.run({
-  engine: "tim-gpt",
-  input: { instructions: "Your prompt", tools: [] },
-  options: { awaitCompletion: true }
-});
-
-const answer = run.result?.answer;  // Clean text - use this for display
-const reasoning = run.result?.reasoning;  // Optional: step-by-step reasoning
-```
-
-### Use `stream()` for Real-time Reasoning Display
-
-**Method**: `stream()`  
-**Behavior**: Streams JSON incrementally as it's built  
-**What you get**: Raw JSON chunks building toward: `{"reasoning": [...], "answer": "..."}`
-
-**WARNING**: The stream content is raw JSON characters, not clean text. You must parse it.
-
-#### What the stream looks like:
-
-```
-delta: {"rea
-delta: soning": [{"th
-delta: ought": "Analyzing
-...
-delta: "}], "answer": "Here's the answer"}
-done: {runId: "run_xxx"}
-```
-
-#### When to use stream():
-
-| Use Case | Method | Why |
-|----------|--------|-----|
-| Show thinking in real-time | `stream()` | Users see reasoning as it happens (like ChatGPT) |
-| Simple chat, fast response | `run()` | Easier, returns clean `answer` directly |
-| Background processing | `run()` without `awaitCompletion` | Poll for status |
-
-#### How to use stream() for reasoning UI:
-
-**See `references/streaming-and-reasoning.md` for complete implementation** including:
-- How to extract thoughts from the JSON stream
-- Next.js API route example
-- React component for displaying reasoning
-- CSS styling
-
-**Quick example:**
-```typescript
-const stream = client.stream({
-  engine: "tim-gpt",
-  input: { instructions: "Your prompt", tools: [] }
-});
-
-let fullContent = "";
-for await (const event of stream) {
-  if (event.type === "delta") {
-    fullContent += event.content;
-    // Extract thoughts using regex (see streaming-and-reasoning.md)
-    const thoughts = extractThoughts(fullContent);
-    // Send to UI
-  } else if (event.type === "done") {
-    const final = JSON.parse(fullContent);
-    const answer = final.answer;  // Extract final answer
-  }
-}
-```
-
-**For most chat UIs, use `run()` instead** - it's simpler and returns clean text directly.
-
-## API Modes
-
-### Sync Mode (Recommended for Chat)
-
-```python
-run = client.run(
-    engine="tim-gpt",
-    input={"instructions": "Your task", "tools": tools},
-    options={"await_completion": True}
-)
-answer = run.result.answer  # Clean text
-```
-
-### Async Mode
-
-For long-running jobs, don't set `await_completion`:
-
-```python
-run = client.run(
-    engine="tim-gpt",
-    input={"instructions": "Long task", "tools": tools}
-    # No await_completion - returns immediately
-)
-
-run_id = run.run_id
-
-# Poll for status
-status = client.get(run_id)
-while status.status not in ["succeeded", "failed"]:
-    time.sleep(2)
-    status = client.get(run_id)
-
-answer = status.result.answer
-```
-
-### Streaming (Advanced)
-
-See `references/examples.md` for streaming examples. **Note**: Streaming returns raw JSON, not clean text.
-
-## SDK Methods Reference
-
-| Method | Description | When to Use |
-|--------|-------------|-------------|
-| `client.run()` | Create a run (sync or async) | Most common - create agent runs |
-| `client.stream()` | Stream run events in real-time | Chat UIs, live demos |
-| `client.get(runId)` | Get current status of a run | Check async run status |
-| `client.wait(runId)` | Poll until run completes | Background jobs, dashboards |
-| `client.cancel(runId)` | Cancel a running/queued run | User cancellation, timeouts |
-
-### client.get()
-
-Get the current status of a run:
-
-```python
-status = client.get(run.run_id)
-print(status.status)  # 'queued' | 'running' | 'succeeded' | 'failed'
-if status.status == "succeeded":
-    print(status.result.answer)
-```
-
-```typescript
-const status = await client.get(run.runId);
-console.log(status.status);
-if (status.status === "succeeded") {
-  console.log(status.result?.answer);
-}
-```
-
-### client.wait()
-
-Automatically poll until a run completes:
-
-```python
-result = client.wait(
-    run.run_id,
-    options={
-        "interval_ms": 2000,  # Poll every 2 seconds (default)
-        "max_attempts": 60,   # Max attempts before giving up (default: 60)
-    },
-)
-```
-
-```typescript
-const result = await client.wait(run.runId, {
-  intervalMs: 2000,  // Poll every 2 seconds
-  maxAttempts: 60,   // Max attempts before giving up
+const resp = await client.chat.completions.create({
+  model: 'subconscious/tim-qwen3.6-27b',
+  messages: [{ role: 'user', content: 'Hello' }],
+  // @ts-expect-error chat_template_kwargs is a Subconscious extension
+  chat_template_kwargs: { enable_thinking: false },
 });
 ```
 
-### client.cancel()
+## cURL
 
-Cancel a run that's still in progress:
-
-```python
-client.cancel(run.run_id)
+```bash
+curl https://api.subconscious.dev/v1/chat/completions \
+  -H "Authorization: Bearer $SUBCONSCIOUS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "subconscious/tim-qwen3.6-27b",
+    "messages": [{"role": "user", "content": "ping"}],
+    "max_tokens": 50,
+    "chat_template_kwargs": {"enable_thinking": false}
+  }'
 ```
 
-```typescript
-await client.cancel(run.runId);
-```
+## Pricing
 
-## Common Patterns
+Per the public dashboard at <https://www.subconscious.dev/platform> (not verified against actual billing):
+- Input: $0.50 / 1M tokens
+- Output: $3.50 / 1M tokens
 
-### Research Agent
+`GET /v1/models` returns zeros in its `pricing` field — that's a placeholder, not the rate. Real pricing comes from the dashboard / docs.
 
-```python
-tools = [
-    {
-        "type": "function",
-        "name": "web_search",
-        "description": "Search the web for current information",
-        "url": "https://your-server.com/search",
-        "method": "POST",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query"}
-            },
-            "required": ["query"]
-        }
-    }
-]
+Thinking tokens count as output. Measured (median of 3 runs each, 2026-05-22):
 
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Research the latest AI breakthroughs",
-        "tools": tools
-    },
-    options={"await_completion": True}
-)
+| Prompt | Off | On | Ratio |
+|---|---|---|---|
+| "Hello" | 8 tokens | 257 tokens | 32× |
+| "Capital of France one word" | 2 tokens | 176 tokens | 88× |
+| "Explain quantum tunneling, 2 sentences" | 53 tokens | 600 tokens (max hit) | 11× |
+| "Solve 17*23 step by step" | 600 (max hit) | 600 (max hit) | ~1× at cap |
 
-print(run.result.answer)
-```
+For short prompts, thinking-on dominates cost. For long-output prompts, both modes can hit `max_tokens`.
 
-### Multi-Tool Agent
+Note: the `pricing` field returned by `/v1/models` currently shows zeros — that's the model spec endpoint, not the billing endpoint. Use the dashboard / docs for pricing.
 
-Define multiple tools. The agent will chain them as needed:
+## References
 
-```python
-tools = [
-    {
-        "type": "function",
-        "name": "search",
-        "description": "Search the web",
-        "url": "https://your-server.com/search",
-        "method": "POST",
-        "parameters": {...}
-    },
-    {
-        "type": "function",
-        "name": "save_to_db",
-        "description": "Save results to database",
-        "url": "https://your-server.com/save",
-        "method": "POST",
-        "parameters": {...}
-    }
-]
-```
-
-## TypeScript Types
-
-### SDK Exports
-
-```typescript
-import {
-  Subconscious,
-  type RunResponse,
-  type StreamEvent,
-  type ReasoningStep,
-  type Tool,
-  type SubconsciousError
-} from "subconscious";
-```
-
-### Response Types
-
-```typescript
-interface RunResponse {
-  runId: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "canceled" | "timed_out";
-  result?: {
-    answer: string;  // Clean text response
-    reasoning?: ReasoningStep[];  // Optional: step-by-step reasoning
-  };
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-    durationMs: number;
-    toolCalls?: { [toolName: string]: number };
-  };
-  error?: {
-    code: string;
-    message: string;
-  };
-}
-
-interface ReasoningStep {
-  title?: string;
-  thought?: string;
-  conclusion?: string;
-  tooluse?: {
-    tool_name: string;
-    parameters: Record<string, unknown>;
-    tool_result: unknown;
-  };
-  subtasks?: ReasoningStep[];
-}
-
-interface StreamEvent {
-  type: "delta" | "done" | "error";
-  content?: string;  // Raw JSON chunk for delta events
-  runId?: string;   // Present on done
-  message?: string;  // Present on error
-}
-```
-
-## Error Handling
-
-### SDK Errors
-
-```typescript
-import { SubconsciousError } from "subconscious";
-
-try {
-  const run = await client.run({
-    engine: "tim-gpt",
-    input: { instructions: "...", tools: [] },
-    options: { awaitCompletion: true }
-  });
-} catch (error) {
-  if (error instanceof SubconsciousError) {
-    switch (error.code) {
-      case "invalid_api_key":
-        // Redirect to settings
-        console.error("Invalid API key");
-        break;
-      case "rate_limited":
-        // Show retry message
-        console.error("Rate limited, retry later");
-        break;
-      case "insufficient_credits":
-        // Prompt to add credits
-        console.error("Insufficient credits");
-        break;
-      case "invalid_request":
-        // Log for debugging
-        console.error("Invalid request:", error.message);
-        break;
-      case "timeout":
-        // Offer to retry with longer timeout
-        console.error("Request timed out");
-        break;
-      default:
-        console.error("Error:", error.message);
-    }
-  } else {
-    // Network or other errors
-    console.error("Unexpected error:", error);
-  }
-}
-```
-
-### HTTP Status Codes
-
-| Status | Code | Meaning | Action |
-|--------|------|---------|--------|
-| 400 | `invalid_request` | Bad request parameters | Fix request |
-| 401 | `invalid_api_key` | Invalid or missing API key | Check API key |
-| 402 | `insufficient_credits` | Account needs credits | Add credits |
-| 429 | `rate_limited` | Too many requests | Retry after delay |
-| 500 | `server_error` | Server error | Retry with backoff |
-| 503 | `service_unavailable` | Service down | Retry later |
-
-### Run-Level Errors
-
-Runs can fail after being accepted. Always check status:
-
-```typescript
-const run = await client.run({...});
-
-if (run.status === "succeeded") {
-  console.log(run.result?.answer);
-} else if (run.status === "failed") {
-  console.error("Run failed:", run.error?.message);
-} else if (run.status === "timed_out") {
-  console.error("Run timed out");
-}
-```
-
-## Request Cancellation
-
-### Using AbortController
-
-```typescript
-const controller = new AbortController();
-
-// Start the request
-const runPromise = client.run({
-  engine: "tim-gpt",
-  input: { instructions: "...", tools: [] },
-  options: { awaitCompletion: true }
-});
-
-// Cancel after 10 seconds
-setTimeout(() => controller.abort(), 10000);
-
-// Or cancel on user action
-cancelButton.onclick = () => controller.abort();
-
-try {
-  const run = await runPromise;
-} catch (error) {
-  if (error.name === "AbortError") {
-    console.log("Request cancelled by user");
-  }
-}
-```
-
-### Cancelling Async Runs
-
-```typescript
-// Start async run
-const run = await client.run({
-  engine: "tim-gpt",
-  input: { instructions: "...", tools: [] }
-  // No awaitCompletion
-});
-
-// Cancel it
-await client.cancel(run.runId);
-```
-
-## Common Gotchas
-
-### CRITICAL: Streaming Returns Raw JSON, Not Text
-
-**The #1 mistake**: Displaying `event.content` from `stream()` directly in the UI shows ugly raw JSON like `{"reasoning":[{"thought":"I need to...`.
-
-**The fix**: Extract thoughts and answer from the JSON:
-
-```typescript
-// BAD - shows raw JSON in UI
-for await (const event of stream) {
-  if (event.type === "delta") {
-    displayToUser(event.content);  // Shows: {"rea... (ugly!)
-  }
-}
-
-// GOOD - extract thoughts and show clean text
-let fullContent = "";
-let sentThoughts: string[] = [];
-
-for await (const event of stream) {
-  if (event.type === "delta") {
-    fullContent += event.content;
-
-    // Extract thoughts using regex
-    const thoughtPattern = /"thought"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
-    let match;
-    while ((match = thoughtPattern.exec(fullContent)) !== null) {
-      const thought = match[1].replace(/\\n/g, " ").replace(/\\"/g, '"');
-      if (!sentThoughts.includes(thought)) {
-        displayThinking(thought);  // Shows: "I need to search for movies..."
-        sentThoughts.push(thought);
-      }
-    }
-  } else if (event.type === "done") {
-    const parsed = JSON.parse(fullContent);
-    displayAnswer(parsed.answer);  // Shows clean final answer
-  }
-}
-```
-
-See `references/streaming-and-reasoning.md` for complete implementation.
-
----
-
-1. **Use `run.result?.answer` for display** - Not `choices[0].message.content` (that's OpenAI format)
-2. **`stream()` returns raw JSON** - Use `run()` for clean text answers in chat UIs. See `references/streaming-and-reasoning.md` for parsing.
-3. **No `/chat/completions` endpoint** - Use the native SDK, not OpenAI SDK
-4. **Instructions format, not messages** - Convert message history to single string
-5. **Tools must be publicly accessible** - Use ngrok for local development
-6. **Response has `result.answer`** - The clean text is in `result.answer`, not `result.content`
-7. **Reasoning field is optional** - Contains internal steps, useful for debugging
-8. **Engine names**: Use `tim`, `tim-edge`, `timini`, `tim-gpt`, `tim-gpt-heavy`, `tim-claude`, `tim-claude-heavy`, `tim-oss-local`, `tim-1.5` (avoid deprecated `tim-small`, `tim-large`)
-9. **Streaming shows raw JSON** - You must parse `{"reasoning": [...], "answer": "..."}` yourself. For simple chat, use `run()` instead.
-10. **`tools: []` is required** - Even if you have no tools, pass an empty array.
-11. **No system message field** - Prepend system prompt to your instructions string.
-12. **Always check `run.status`** - Don't access `run.result` without checking status first.
-
-## Next.js/Vercel Example
-
-See `references/examples.md` for complete Next.js API route example with Server-Sent Events.
-
-## Production Checklist
-
-### Security
-- [ ] API key in environment variables, never client-side
-- [ ] Rate limiting on your API routes
-- [ ] Input validation (max message length, sanitization)
-- [ ] CORS configuration for production domains
-
-### Reliability
-- [ ] Retry logic with exponential backoff for 5xx errors
-- [ ] Timeout configuration (default may be too short for complex tasks)
-- [ ] Graceful error messages for users
-- [ ] Health check endpoint
-
-### Monitoring
-- [ ] Log `run.usage` for cost tracking
-- [ ] Track `run.usage.durationMs` for latency monitoring
-- [ ] Alert on error rate spikes
-- [ ] Monitor `run.usage.toolCalls` for tool usage patterns
-
-### UX
-- [ ] Loading states while waiting for response
-- [ ] Ability to cancel long-running requests
-- [ ] Show reasoning/thinking indicators (if using stream())
-- [ ] Error recovery (retry buttons)
-- [ ] Clear error messages
-
-### Cost Control
-- [ ] Use `tim` or `tim-edge` for simple tasks, `tim-gpt-heavy` only when needed
-- [ ] Implement usage quotas per user if needed
-- [ ] Monitor token usage in production
-
-## Reference Files
-
-For detailed information, see:
-- `references/api-reference.md` - Complete API documentation with correct response formats
-- `references/streaming-and-reasoning.md` - **CRITICAL**: How to stream and display reasoning steps (solves the raw JSON problem)
-- `references/typescript-types.md` - Complete TypeScript type definitions
-- `references/error-handling.md` - Error handling patterns and best practices
-- `references/tools-guide.md` - Platform tools table, function tools, **MCP** (auth, `allowedTools`, HTTP-only constraints)
-- `references/examples.md` - Complete working examples including Next.js and reasoning display
-
-**Internal monorepo** (`subconscious-monorepo`): engine catalog in `packages/common/engines.ts`; MCP proxy/discovery under `apps/api/src/endpoints/mcp/`; MCP setup skill at `.claude/skills/mcp-builder/` for building compliant servers.
+- `references/api-reference.md` — Endpoint, full request/response shapes, error formats
+- `references/thinking.md` — How thinking actually behaves; default-on; stripping the preamble
+- `references/tools.md` — OpenAI function calling pattern; full tool loop; what's accepted vs rejected
+- `references/structured-output.md` — `response_format` with JSON Schema + Pydantic/Zod
+- `references/multimodal.md` — Vision (works on data URLs, sometimes URLs), audio/file/video (all rejected)
+- `references/best-practices.md` — Production patterns, cost monitoring, retries
+- `references/examples.md` — Working snippets (Python, TypeScript, cURL)
 
 ## Resources
 
-- **Docs**: https://docs.subconscious.dev
-- **Platform**: https://subconscious.dev/platform
-- **Playground**: https://subconscious.dev/playground
-- **Python SDK**: https://github.com/subconscious-systems/subconscious-python
-- **Node SDK**: https://github.com/subconscious-systems/subconscious-node
-- **Examples**: https://github.com/subconscious-systems/subconscious/tree/main/examples
-
-When in doubt, check the official docs at docs.subconscious.dev for the latest information.
+- API base: <https://api.subconscious.dev/v1>
+- Model spec: `GET https://api.subconscious.dev/v1/models`
+- Dashboard: <https://www.subconscious.dev/platform>
+- Playground: <https://www.subconscious.dev/playground>
+- Docs: <https://docs.subconscious.dev>
+- Pricing: <https://docs.subconscious.dev/pricing>
