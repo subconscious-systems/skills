@@ -1,1146 +1,563 @@
-# Subconscious Examples
+# Examples
 
-Complete, copy-paste-able examples for building with Subconscious.
+Working snippets, verified against the live API 2026-05-22. All assume `SUBCONSCIOUS_API_KEY` is set.
 
-## Simple Chat (No Tools)
-
-### Python
+## 1. Hello (Python)
 
 ```python
-from subconscious import Subconscious
+import os
+from openai import OpenAI
 
-client = Subconscious(api_key="your-api-key")  # Get from https://subconscious.dev/platform
-
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Explain quantum computing in simple terms",
-        "tools": []
-    },
-    options={"await_completion": True}
+client = OpenAI(
+    base_url="https://api.subconscious.dev/v1",
+    api_key=os.environ["SUBCONSCIOUS_API_KEY"],
 )
 
-# Extract clean text answer
-answer = run.result.answer
-print(answer)
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Hello"}],
+    max_tokens=100,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+
+print(resp.choices[0].message.content)
+print(f"used {resp.usage.prompt_tokens}in / {resp.usage.completion_tokens}out")
 ```
 
-### Node.js/TypeScript
+## 2. Hello (TypeScript)
 
 ```typescript
-import { Subconscious } from "subconscious";
+import OpenAI from 'openai';
 
-const client = new Subconscious({
+const client = new OpenAI({
+  baseURL: 'https://api.subconscious.dev/v1',
   apiKey: process.env.SUBCONSCIOUS_API_KEY!,
 });
 
-const run = await client.run({
-  engine: "tim-gpt",
-  input: {
-    instructions: "Explain quantum computing in simple terms",
-    tools: [],
-  },
-  options: { awaitCompletion: true },
+const resp = await client.chat.completions.create({
+  model: 'subconscious/tim-qwen3.6-27b',
+  messages: [{ role: 'user', content: 'Hello' }],
+  max_tokens: 100,
+  // @ts-expect-error chat_template_kwargs is a Subconscious extension
+  chat_template_kwargs: { enable_thinking: false },
 });
 
-// Extract clean text answer
-const answer = run.result?.answer;
-console.log(answer);
+console.log(resp.choices[0].message.content);
 ```
 
-## Chat with Message History
+## 3. Hello (cURL)
 
-Converting message history to instructions format:
+```bash
+curl https://api.subconscious.dev/v1/chat/completions \
+  -H "Authorization: Bearer $SUBCONSCIOUS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "subconscious/tim-qwen3.6-27b",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 100,
+    "chat_template_kwargs": {"enable_thinking": false}
+  }'
+```
 
-### Python
+## 4. List the model — `GET /v1/models`
+
+```bash
+curl https://api.subconscious.dev/v1/models \
+  -H "Authorization: Bearer $SUBCONSCIOUS_API_KEY"
+```
+
+Returns the authoritative model spec — context length, max output, sampling parameters honored, features, modalities. Treat this as the source of truth.
+
+## 5. Thinking on vs off
 
 ```python
-from subconscious import Subconscious
+# Thinking off — fast chat reply, no preamble
+fast = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "What's the capital of France?"}],
+    max_tokens=50,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+# content: "Paris."
 
-client = Subconscious(api_key="your-api-key")
+# Thinking on (default) — model emits a reasoning preamble before the answer
+deep = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Plan a 3-day Tokyo itinerary."}],
+    max_tokens=2000,
+)
+# content starts with: "Here's a thinking process:\n\n1. **Understand the request:**..."
+```
 
-# Message history (like from a chat UI)
-messages = [
-    {"role": "user", "content": "Hello!"},
-    {"role": "assistant", "content": "Hi there! How can I help?"},
-    {"role": "user", "content": "Tell me about quantum computing"}
-]
+The model does NOT use `<think>...</think>` tags — thinking is plain prose in `content`. To get a clean answer, set `enable_thinking: false`.
 
-# Convert to instructions string
-instructions = "\n\n".join([
-    f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
-    for m in messages
-]) + "\n\nRespond to the user's latest message."
+## 6. Streaming
 
-run = client.run(
-    engine="tim-gpt",
-    input={"instructions": instructions, "tools": []},
-    options={"await_completion": True}
+```python
+stream = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Write a haiku about Boston."}],
+    stream=True,
+    stream_options={"include_usage": True},
+    max_tokens=100,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
 )
 
-print(run.result.answer)  # Clean text response
+for chunk in stream:
+    delta = chunk.choices[0].delta if chunk.choices else None
+    if delta and delta.content:
+        print(delta.content, end="", flush=True)
+    if chunk.usage:
+        print(f"\n[in={chunk.usage.prompt_tokens} out={chunk.usage.completion_tokens}]")
 ```
 
-### Node.js/TypeScript
-
-```typescript
-import { Subconscious } from "subconscious";
-
-const client = new Subconscious({
-  apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-});
-
-const messages = [
-  { role: "user", content: "Hello!" },
-  { role: "assistant", content: "Hi there! How can I help?" },
-  { role: "user", content: "Tell me about quantum computing" }
-];
-
-// Convert to instructions string
-const instructions = messages
-  .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
-  .join("\n\n") + "\n\nRespond to the user's latest message.";
-
-const run = await client.run({
-  engine: "tim-gpt",
-  input: { instructions, tools: [] },
-  options: { awaitCompletion: true },
-});
-
-console.log(run.result?.answer);  // Clean text response
-```
-
-## Search Agent with Custom Tool
-
-### Complete Example: Python
-
-**1. Tool Server (FastAPI):**
+## 7. Structured output (response_format with json_schema)
 
 ```python
-# server.py
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List
+import json
+from openai import OpenAI
 
-app = FastAPI()
+client = OpenAI(
+    base_url="https://api.subconscious.dev/v1",
+    api_key=os.environ["SUBCONSCIOUS_API_KEY"],
+)
 
-class SearchRequest(BaseModel):
-    query: str
-    max_results: int = 10
-
-class SearchResult(BaseModel):
-    title: str
-    url: str
-    description: str
-
-@app.post("/search", response_model=List[SearchResult])
-async def search(req: SearchRequest):
-    # Mock search - replace with real search logic
-    return [
-        SearchResult(
-            title=f"Result {i}",
-            url=f"https://example.com/{i}",
-            description=f"Description for result {i} about {req.query}"
-        )
-        for i in range(min(req.max_results, 5))
-    ]
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-```
-
-**2. Agent Client:**
-
-```python
-# agent.py
-from subconscious import Subconscious
-
-# Your tool server URL (use ngrok for local: ngrok http 8000)
-TOOL_SERVER_URL = "https://your-ngrok-url.ngrok.io"
-
-client = Subconscious(api_key="your-api-key")
-
-tools = [
-    {
-        "type": "function",
-        "name": "web_search",
-        "description": "Search the web for current information. Returns title, URL, and description of results.",
-        "url": f"{TOOL_SERVER_URL}/search",
-        "method": "POST",
-        "timeout": 10,
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query in natural language"
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Analyze: 'Great product, fast shipping!'"}],
+    response_format={
+        "type": "json_schema",
+        "json_schema": {
+            "name": "sentiment",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "sentiment": {"type": "string", "enum": ["positive", "neutral", "negative"]},
+                    "confidence": {"type": "number"},
                 },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of results (default: 10)",
-                    "default": 10
-                }
+                "required": ["sentiment", "confidence"],
             },
-            "required": ["query"],
-            "additionalProperties": False
-        }
-    }
-]
-
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Search for information about quantum computing breakthroughs in 2025",
-        "tools": tools
+            "strict": True,
+        },
     },
-    options={"await_completion": True}
+    max_tokens=200,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
 )
 
-# Extract clean text answer
-print(run.result.answer)
+result = json.loads(resp.choices[0].message.content)
+print(result)
+# {'sentiment': 'positive', 'confidence': 0.95}
 ```
 
-### Complete Example: Node.js/TypeScript
-
-**1. Tool Server (Express):**
-
-```typescript
-// server.ts
-import express, { Request, Response } from "express";
-
-const app = express();
-app.use(express.json());
-
-interface SearchRequest {
-  query: string;
-  max_results?: number;
-}
-
-interface SearchResult {
-  title: string;
-  url: string;
-  description: string;
-}
-
-app.post("/search", (req: Request<{}, SearchResult[], SearchRequest>, res: Response<SearchResult[]>) => {
-  const { query, max_results = 10 } = req.body;
-  
-  // Mock search - replace with real search logic
-  const results: SearchResult[] = Array.from({ length: Math.min(max_results, 5) }, (_, i) => ({
-    title: `Result ${i + 1}`,
-    url: `https://example.com/${i + 1}`,
-    description: `Description for result ${i + 1} about ${query}`
-  }));
-  
-  res.json(results);
-});
-
-app.listen(8000, () => {
-  console.log("Tool server running on :8000");
-});
-```
-
-**2. Agent Client:**
-
-```typescript
-// agent.ts
-import { Subconscious } from "subconscious";
-
-// Your tool server URL (use ngrok for local: ngrok http 8000)
-const TOOL_SERVER_URL = "https://your-ngrok-url.ngrok.io";
-
-const client = new Subconscious({
-  apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-});
-
-const tools = [
-  {
-    type: "function" as const,
-    name: "web_search",
-    description: "Search the web for current information. Returns title, URL, and description of results.",
-    url: `${TOOL_SERVER_URL}/search`,
-    method: "POST" as const,
-    timeout: 10,
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "The search query in natural language"
-        },
-        max_results: {
-          type: "integer",
-          description: "Maximum number of results (default: 10)",
-          default: 10
-        }
-      },
-      required: ["query"],
-      additionalProperties: false
-    }
-  }
-];
-
-const run = await client.run({
-  engine: "tim-gpt",
-  input: {
-    instructions: "Search for information about quantum computing breakthroughs in 2025",
-    tools: tools
-  },
-  options: { awaitCompletion: true },
-});
-
-// Extract clean text answer
-console.log(run.result?.answer);
-```
-
-## Structured Output Example
-
-Get type-safe, structured responses using JSON Schema:
-
-### Python with Pydantic
+## 8. Structured output (Pydantic)
 
 ```python
-from subconscious import Subconscious
 from pydantic import BaseModel
+from openai import OpenAI
 
-class AnalysisResult(BaseModel):
-    summary: str
-    key_points: list[str]
-    sentiment: str
+class Sentiment(BaseModel):
+    label: str
     confidence: float
+    keywords: list[str]
 
-client = Subconscious(api_key="your-api-key")
-
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Analyze the latest AI news and provide a structured analysis",
-        "tools": [{"type": "platform", "id": "web_search"}],
-        "answerFormat": AnalysisResult,  # Pass Pydantic model directly
-    },
-    options={"await_completion": True},
+client = OpenAI(
+    base_url="https://api.subconscious.dev/v1",
+    api_key=os.environ["SUBCONSCIOUS_API_KEY"],
 )
 
-# Result is already a dict - no parsing needed
-result = run.result.answer
-print(result["summary"])
-print(result["key_points"])
-print(result["sentiment"])
+resp = client.beta.chat.completions.parse(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Analyze: 'works great'"}],
+    response_format=Sentiment,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+
+result = resp.choices[0].message.parsed   # typed Sentiment instance
+print(result.label, result.confidence)
 ```
 
-### Node.js/TypeScript with Zod
-
-```typescript
-import { z } from 'zod';
-import { Subconscious, zodToJsonSchema } from 'subconscious';
-
-const AnalysisSchema = z.object({
-  summary: z.string().describe('A brief summary of the findings'),
-  keyPoints: z.array(z.string()).describe('Main takeaways'),
-  sentiment: z.enum(['positive', 'neutral', 'negative']),
-  confidence: z.number().min(0).max(1).describe('Confidence score'),
-});
-
-const client = new Subconscious({
-  apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-});
-
-const run = await client.run({
-  engine: 'tim-gpt',
-  input: {
-    instructions: 'Analyze the latest news about electric vehicles',
-    tools: [{ type: 'platform', id: 'fast_search' }],
-    answerFormat: zodToJsonSchema(AnalysisSchema, 'Analysis'),
-  },
-  options: { awaitCompletion: true },
-});
-
-// Result is typed according to your schema
-const result = run.result?.answer as z.infer<typeof AnalysisSchema>;
-console.log(result.summary);
-console.log(result.keyPoints);
-console.log(result.sentiment);
-```
-
-### Manual JSON Schema
-
-```typescript
-const run = await client.run({
-  engine: 'tim-gpt',
-  input: {
-    instructions: 'Extract key information from the text',
-    tools: [],
-    answerFormat: {
-      type: 'object',
-      title: 'ExtractedInfo',
-      properties: {
-        entities: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              name: { type: 'string' },
-              type: { type: 'string' },
-            },
-            required: ['name', 'type'],
-          },
-        },
-        summary: { type: 'string' },
-      },
-      required: ['entities', 'summary'],
-    },
-  },
-  options: { awaitCompletion: true },
-});
-
-const result = run.result?.answer;
-console.log(result.entities);
-console.log(result.summary);
-```
-
-## Multi-Tool Agent
-
-### Python
+## 9. json_mode (simpler structured output, no schema)
 
 ```python
-from subconscious import Subconscious
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[
+        {"role": "system", "content": "Respond with a JSON object."},
+        {"role": "user", "content": "List 3 fruits with their colors."},
+    ],
+    response_format={"type": "json_object"},
+    max_tokens=200,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+print(resp.choices[0].message.content)
+```
 
-TOOL_SERVER_URL = "https://your-server.com"
+## 10. Function tool — full loop
 
-client = Subconscious(api_key="your-api-key")
+```python
+import json
+from openai import OpenAI
 
-tools = [
-    {
-        "type": "function",
-        "name": "web_search",
-        "description": "Search the web for current information",
-        "url": f"{TOOL_SERVER_URL}/search",
-        "method": "POST",
+client = OpenAI(
+    base_url="https://api.subconscious.dev/v1",
+    api_key=os.environ["SUBCONSCIOUS_API_KEY"],
+)
+
+def get_weather(city: str) -> dict:
+    return {"city": city, "temp_f": 72, "condition": "sunny"}
+
+
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Get current weather for a city",
         "parameters": {
             "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query"}
-            },
-            "required": ["query"]
-        }
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
     },
-    {
-        "type": "function",
-        "name": "save_to_database",
-        "description": "Save research findings to database",
-        "url": f"{TOOL_SERVER_URL}/save",
-        "method": "POST",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "content": {"type": "string"},
-                "tags": {"type": "array", "items": {"type": "string"}}
-            },
-            "required": ["title", "content"]
-        }
+}]
+
+messages = [{"role": "user", "content": "What's the weather in Boston?"}]
+
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=messages,
+    tools=tools,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+
+msg = resp.choices[0].message
+if msg.tool_calls:
+    messages.append({
+        "role": "assistant",
+        "content": msg.content,
+        "tool_calls": [{
+            "id": tc.id,
+            "type": "function",
+            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+        } for tc in msg.tool_calls],
+    })
+    for tc in msg.tool_calls:
+        result = get_weather(**json.loads(tc.function.arguments))
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tc.id,
+            "content": json.dumps(result),
+        })
+    resp = client.chat.completions.create(
+        model="subconscious/tim-qwen3.6-27b",
+        messages=messages,
+        tools=tools,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    )
+
+print(resp.choices[0].message.content)
+```
+
+## 11. `tool_choice` — control whether/which tool runs
+
+```python
+# Force the model to use a specific tool
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Boston"}],
+    tools=[
+        {"type": "function", "function": {"name": "get_weather", "description": "...",
+                                          "parameters": {"type": "object",
+                                                         "properties": {"city": {"type": "string"}},
+                                                         "required": ["city"]}}},
+    ],
+    tool_choice={"type": "function", "function": {"name": "get_weather"}},
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+print(resp.choices[0].message.tool_calls[0].function.arguments)
+# {"city": "Boston"}
+
+# Force model to NOT call any tool — get a plain reply even with tools defined
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "What's the weather in Boston?"}],
+    tools=[WEATHER_TOOL],
+    tool_choice="none",
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+print(resp.choices[0].message.content)
+# "I don't have real-time weather data..."
+
+# Force model to call SOME tool (errors if it can't)
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Hello"}],
+    tools=[WEATHER_TOOL],
+    tool_choice="required",
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+```
+
+## 12. Legacy text completions (`/v1/completions`)
+
+For prompt-completion patterns without messages structure. Verified to accept all standard OpenAI completion fields.
+
+```python
+import httpx, os
+
+r = httpx.post(
+    "https://api.subconscious.dev/v1/completions",
+    headers={"Authorization": f"Bearer {os.environ['SUBCONSCIOUS_API_KEY']}",
+             "Content-Type": "application/json"},
+    json={
+        "model": "subconscious/tim-qwen3.6-27b",
+        "prompt": "The capital of France is",
+        "max_tokens": 20,
+        "stop": ["."],
+        "temperature": 0,
     },
-    {
-        "type": "function",
-        "name": "send_email",
-        "description": "Send email notification",
-        "url": f"{TOOL_SERVER_URL}/email",
-        "method": "POST",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "to": {"type": "string"},
-                "subject": {"type": "string"},
-                "body": {"type": "string"}
-            },
-            "required": ["to", "subject", "body"]
-        }
-    }
+    timeout=30.0,
+)
+print(r.json()["choices"][0]["text"])
+```
+
+### Batch via prompt array
+
+```python
+r = httpx.post(
+    "https://api.subconscious.dev/v1/completions",
+    headers={"Authorization": f"Bearer {os.environ['SUBCONSCIOUS_API_KEY']}",
+             "Content-Type": "application/json"},
+    json={
+        "model": "subconscious/tim-qwen3.6-27b",
+        "prompt": ["Hello", "Goodbye"],
+        "max_tokens": 20,
+    },
+    timeout=30.0,
+)
+# Returns one choice per prompt
+for i, choice in enumerate(r.json()["choices"]):
+    print(f"[{i}] {choice['text']}")
+```
+
+### Echo + suffix
+
+```python
+# echo=True prepends the prompt to the response text
+r = httpx.post(
+    "https://api.subconscious.dev/v1/completions",
+    headers={"Authorization": f"Bearer {os.environ['SUBCONSCIOUS_API_KEY']}",
+             "Content-Type": "application/json"},
+    json={
+        "model": "subconscious/tim-qwen3.6-27b",
+        "prompt": "Once upon a time",
+        "max_tokens": 30,
+        "echo": True,
+    },
+)
+# text starts with "Once upon a time..." then continues
+```
+
+**Important**: Thinking behavior on `/v1/completions` is **different from `/v1/chat/completions`** and unstable — don't pass `chat_template_kwargs.enable_thinking`. The default produces clean output for most prompts. See `api-reference.md` for details.
+
+Prefer `/chat/completions` for new code; use this only when porting existing prompt-completion pipelines or when you specifically need `echo` / batch.
+
+## 13. Conversation history (multi-turn)
+
+```python
+messages = [
+    {"role": "system", "content": "Reply with one short word only."},
+    {"role": "user", "content": "What's the capital of France?"},
 ]
 
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Research the latest AI news, save the top 3 findings to the database, and email me a summary",
-        "tools": tools
-    },
-    options={"await_completion": True}
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=messages,
+    max_tokens=20,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
 )
+a1 = resp.choices[0].message.content    # "Paris"
 
-print(run.result.answer)
+messages.append({"role": "assistant", "content": a1})
+messages.append({"role": "user", "content": "And its country?"})
+
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=messages,
+    max_tokens=20,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+print(resp.choices[0].message.content)   # "France"
 ```
 
-## Async Run with Polling
-
-### Using client.get() (Manual Polling)
-
-### Python
-
-```python
-from subconscious import Subconscious
-import time
-
-client = Subconscious(api_key="your-api-key")
-
-# Start async run (no await_completion)
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Generate a comprehensive market analysis report",
-        "tools": tools
-    }
-    # No await_completion - returns immediately
-)
-
-run_id = run.run_id
-print(f"Run started: {run_id}")
-
-# Poll for completion
-while True:
-    status = client.get(run_id)
-    if status.status == "succeeded":
-        print(status.result.answer)
-        break
-    elif status.status == "failed":
-        print(f"Run failed: {status.error}")
-        break
-    time.sleep(2)  # Poll every 2 seconds
-```
-
-### Node.js/TypeScript
+## 14. Next.js — proxy from your backend
 
 ```typescript
-import { Subconscious } from "subconscious";
+// app/api/chat/route.ts
+import { NextRequest } from 'next/server';
+import OpenAI from 'openai';
 
-const client = new Subconscious({
+const client = new OpenAI({
+  baseURL: 'https://api.subconscious.dev/v1',
   apiKey: process.env.SUBCONSCIOUS_API_KEY!,
 });
-
-// Start async run
-const run = await client.run({
-  engine: "tim-gpt",
-  input: {
-    instructions: "Generate a comprehensive market analysis report",
-    tools: tools
-  }
-  // No awaitCompletion - returns immediately
-});
-
-const runId = run.runId;
-console.log(`Run started: ${runId}`);
-
-// Poll for completion
-while (true) {
-  const status = await client.get(runId);
-  if (status.status === "succeeded") {
-    console.log(status.result?.answer);
-    break;
-  } else if (status.status === "failed") {
-    console.error(`Run failed: ${status.error}`);
-    break;
-  }
-    await new Promise(resolve => setTimeout(resolve, 2000));  // Poll every 2 seconds
-}
-```
-
-### Using client.wait() (Automatic Polling)
-
-**Python:**
-```python
-from subconscious import Subconscious
-
-client = Subconscious(api_key="your-api-key")
-
-# Start async run
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Generate a comprehensive market analysis report",
-        "tools": tools
-    }
-    # No await_completion - returns immediately
-)
-
-# Automatically poll until complete
-result = client.wait(
-    run.run_id,
-    options={
-        "interval_ms": 2000,  # Poll every 2 seconds
-        "max_attempts": 60,   # Give up after 60 attempts (2 minutes)
-    }
-)
-
-print(result.result.answer)
-```
-
-**Node.js/TypeScript:**
-```typescript
-import { Subconscious } from "subconscious";
-
-const client = new Subconscious({
-  apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-});
-
-// Start async run
-const run = await client.run({
-  engine: "tim-gpt",
-  input: {
-    instructions: "Generate a comprehensive market analysis report",
-    tools: tools
-  }
-  // No awaitCompletion - returns immediately
-});
-
-// Automatically poll until complete
-const result = await client.wait(run.runId, {
-  intervalMs: 2000,  // Poll every 2 seconds
-  maxAttempts: 60,   // Give up after 60 attempts
-});
-
-console.log(result.result?.answer);
-```
-
-## Webhooks (Async Notifications)
-
-Get notified when runs complete without polling:
-
-### Python
-
-**1. Start Run with Callback URL:**
-```python
-from subconscious import Subconscious
-
-client = Subconscious(api_key="your-api-key")
-
-run = client.run(
-    engine="tim-gpt",
-    input={
-        "instructions": "Generate a detailed report",
-        "tools": []
-    },
-    output={
-        "callbackUrl": "https://your-server.com/webhooks/subconscious"
-    }
-)
-
-print(f"Run started: {run.run_id}")
-# Run will POST result to your callback URL when complete
-```
-
-**2. Webhook Handler (FastAPI):**
-```python
-from fastapi import FastAPI, Request
-
-app = FastAPI()
-
-@app.post("/webhooks/subconscious")
-async def handle_webhook(request: Request):
-    payload = await request.json()
-    
-    run_id = payload.get("runId")
-    status = payload.get("status")
-    
-    if status == "succeeded":
-        result = payload.get("result", {})
-        answer = result.get("answer", "")
-        print(f"Run {run_id} completed: {answer[:100]}...")
-        # Save to database, trigger next step, etc.
-    elif status == "failed":
-        error = payload.get("error", {})
-        print(f"Run {run_id} failed: {error.get('message')}")
-    
-    return {"received": True}
-```
-
-### Node.js/TypeScript
-
-**1. Start Run with Callback URL:**
-```typescript
-import { Subconscious } from "subconscious";
-
-const client = new Subconscious({
-  apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-});
-
-const run = await client.run({
-  engine: "tim-gpt",
-  input: {
-    instructions: "Generate a detailed report",
-    tools: []
-  },
-  output: {
-    callbackUrl: "https://your-server.com/webhooks/subconscious"
-  }
-});
-
-console.log(`Run started: ${run.runId}`);
-// Run will POST result to your callback URL when complete
-```
-
-**2. Webhook Handler (Express):**
-```typescript
-import express from "express";
-
-const app = express();
-app.use(express.json());
-
-app.post("/webhooks/subconscious", (req, res) => {
-  const { runId, status, result, error } = req.body;
-  
-  if (status === "succeeded") {
-    console.log(`Run ${runId} completed:`, result?.answer?.slice(0, 100));
-    // Save to database, trigger next step, etc.
-  } else if (status === "failed") {
-    console.error(`Run ${runId} failed:`, error?.message);
-  }
-  
-  // Always respond quickly with 2xx
-  res.status(200).json({ received: true });
-});
-
-app.listen(8000, () => {
-  console.log("Webhook server running on :8000");
-});
-```
-
-### Webhook Payload
-
-When a run completes, Subconscious POSTs this JSON to your callback URL:
-
-```json
-{
-  "runId": "run_abc123...",
-  "status": "succeeded",
-  "result": {
-    "answer": "The report content...",
-    "reasoning": [...]
-  },
-  "usage": {
-    "inputTokens": 1234,
-    "outputTokens": 567,
-    "durationMs": 45000
-  },
-  "error": null
-}
-```
-
-### Webhook Best Practices
-
-1. **Respond quickly** - Return 2xx within 30 seconds
-2. **Be idempotent** - You may receive the same webhook twice
-3. **Process async** - Do heavy work in background, respond immediately
-4. **Use ngrok for local dev** - Expose local server publicly
-5. **Validate origin** - Check request headers (signature verification coming soon)
-
-## Streaming with Reasoning Display
-
-Complete example showing how to stream and display reasoning steps (like ChatGPT's thinking process):
-
-### Next.js API Route with Reasoning Extraction
-
-```typescript
-// app/api/chat/stream/route.ts
-import { Subconscious } from "subconscious";
-import { NextRequest } from "next/server";
-
-export const runtime = "edge";
-
-// Extract thoughts from JSON content (same pattern as school_scheduler)
-function extractThoughts(content: string): string[] {
-  const thoughts: string[] = [];
-  
-  // Find "thought": "..." patterns
-  const thoughtPattern = /"thought"\s*:\s*"([^"]+(?:\\.[^"]*)*?)"/g;
-  let match;
-  
-  while ((match = thoughtPattern.exec(content)) !== null) {
-    // Unescape the string
-    const thought = match[1]
-      .replace(/\\n/g, " ")
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\")
-      .trim();
-    
-    if (thought && thought.length > 10) {
-      thoughts.push(thought);
-    }
-  }
-  
-  // Also extract titles for context
-  const titlePattern = /"title"\s*:\s*"([^"]+)"/g;
-  while ((match = titlePattern.exec(content)) !== null) {
-    const title = match[1].trim();
-    if (title && title.length > 5 && !thoughts.includes(title)) {
-      thoughts.unshift(title); // Add titles at beginning
-    }
-  }
-  
-  return thoughts;
-}
 
 export async function POST(req: NextRequest) {
-  const { messages, tools = [] } = await req.json();
-  
-  // Convert messages to instructions
-  const instructions = messages
-    .map((m: { role: string; content: string }) => 
-      `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`
-    )
-    .join("\n\n") + "\n\nRespond to the user's latest message.";
-  
-  const client = new Subconscious({
-    apiKey: process.env.SUBCONSCIOUS_API_KEY!,
+  const { messages } = await req.json();
+
+  const stream = await client.chat.completions.create({
+    model: 'subconscious/tim-qwen3.6-27b',
+    messages,
+    stream: true,
+    stream_options: { include_usage: true },
+    // @ts-expect-error
+    chat_template_kwargs: { enable_thinking: false },
   });
-  
-  const stream = client.stream({
-    engine: "tim-gpt",
-    input: { instructions, tools },
-  });
-  
+
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
       try {
-        let fullContent = "";
-        let lastSentThoughts: string[] = [];
-        
-        for await (const event of stream) {
-          if (event.type === "delta") {
-            fullContent += event.content;
-            
-            // Extract and send new thoughts
-            const thoughts = extractThoughts(fullContent);
-            const newThoughts = thoughts.filter(
-              (t) => !lastSentThoughts.includes(t)
-            );
-            
-            // Send each new thought as separate event
-            for (const thought of newThoughts) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "thought", thought })}\n\n`
-                )
-              );
-              lastSentThoughts.push(thought);
-            }
-          } else if (event.type === "done") {
-            // Parse final answer
-            try {
-              const final = JSON.parse(fullContent);
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "answer", answer: final.answer })}\n\n`
-                )
-              );
-            } catch {
-              // Fallback: extract answer field using regex
-              const answerMatch = fullContent.match(/"answer"\s*:\s*"([^"]+)"/);
-              if (answerMatch) {
-                controller.enqueue(
-                  encoder.encode(
-                    `data: ${JSON.stringify({ type: "answer", answer: answerMatch[1] })}\n\n`
-                  )
-                );
-              }
-            }
-            
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-            controller.close();
-          } else if (event.type === "error") {
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "error", message: event.message })}\n\n`
-              )
-            );
-            controller.close();
-          }
+        for await (const chunk of stream) {
+          const text = chunk.choices[0]?.delta?.content;
+          if (text) controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: text })}\n\n`));
         }
-      } catch (error) {
-        controller.error(error);
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      } finally {
+        controller.close();
       }
     },
   });
-  
+
   return new Response(readable, {
     headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
     },
   });
 }
 ```
 
-### React Component: Display Reasoning Steps
+## 15. Retry helper
 
-```tsx
-"use client";
+```python
+import time, random
+from openai import OpenAI, RateLimitError, APIStatusError
 
-import { useState } from "react";
-
-interface Thought {
-  id: number;
-  text: string;
-  isComplete: boolean;
-}
-
-export function ChatWithReasoning() {
-  const [thoughts, setThoughts] = useState<Thought[]>([]);
-  const [answer, setAnswer] = useState<string>("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [currentThought, setCurrentThought] = useState<string>("");
-  
-  const sendMessage = async (message: string) => {
-    setThoughts([]);
-    setAnswer("");
-    setIsStreaming(true);
-    setCurrentThought("");
-    
-    const response = await fetch("/api/chat/stream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: message }],
-        tools: []
-      }),
-    });
-    
-    if (!response.body) return;
-    
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let thoughtId = 0;
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      const chunk = decoder.decode(value);
-      const lines = chunk.split("\n");
-      
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            
-            if (data.type === "thought") {
-              // Mark previous thought as complete
-              setThoughts(prev => 
-                prev.map(t => t.id === thoughtId - 1 ? { ...t, isComplete: true } : t)
-              );
-              
-              // Add new thought
-              const newThought = { 
-                id: thoughtId++, 
-                text: data.thought, 
-                isComplete: false 
-              };
-              setThoughts(prev => [...prev, newThought]);
-              setCurrentThought(data.thought);
-            } else if (data.type === "answer") {
-              setAnswer(data.answer);
-              setIsStreaming(false);
-              setCurrentThought("");
-              // Mark last thought as complete
-              setThoughts(prev => 
-                prev.map((t, i) => i === prev.length - 1 ? { ...t, isComplete: true } : t)
-              );
-            } else if (data.type === "error") {
-              console.error("Stream error:", data.message);
-              setIsStreaming(false);
-            }
-          } catch (e) {
-            // Ignore parse errors for incomplete JSON
-          }
-        }
-      }
-    }
-  };
-  
-  return (
-    <div className="chat-container">
-      {/* Reasoning Display */}
-      {thoughts.length > 0 && (
-        <div className="reasoning-container">
-          <div className="reasoning-header">
-            <span className="thinking-dot" />
-            Agent Thinking
-          </div>
-          <div className="thoughts-list">
-            {thoughts.map((thought) => (
-              <div
-                key={thought.id}
-                className={`thought-item ${thought.isComplete ? "complete" : "active"}`}
-              >
-                <span className="thought-number">{thought.id + 1}</span>
-                <span className="thought-text">
-                  {thought.text}
-                  {!thought.isComplete && <span className="cursor">▌</span>}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      
-      {/* Current Thought Indicator */}
-      {isStreaming && currentThought && (
-        <div className="current-thought">
-          <span className="thinking-dots">
-            <span></span><span></span><span></span>
-          </span>
-          {currentThought}
-        </div>
-      )}
-      
-      {/* Final Answer */}
-      {answer && (
-        <div className="answer">
-          {answer}
-        </div>
-      )}
-    </div>
-  );
-}
+def call(messages, *, retries=5):
+    for attempt in range(retries):
+        try:
+            return client.chat.completions.create(
+                model="subconscious/tim-qwen3.6-27b",
+                messages=messages,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+        except RateLimitError:
+            time.sleep(1.0 * (2 ** attempt) + random.random())
+        except APIStatusError as e:
+            if 500 <= e.status_code < 600:
+                time.sleep(1.0 * (2 ** attempt) + random.random())
+            else:
+                raise
+    raise RuntimeError("retries exhausted")
 ```
 
-**See `streaming-and-reasoning.md` for complete CSS and more examples.**
+## 16. Usage tracking wrapper
 
-## Next.js/Vercel API Route Example (Simple Chat)
+```python
+import logging
+log = logging.getLogger(__name__)
 
-Simple Next.js API route without streaming:
-
-```typescript
-// app/api/chat/route.ts (Next.js App Router)
-import { Subconscious } from "subconscious";
-import { NextRequest } from "next/server";
-
-export const runtime = "edge";  // Edge runtime compatible
-
-export async function POST(req: NextRequest) {
-  const { messages, tools = [] } = await req.json();
-
-  // Convert messages to instructions
-  const instructions = messages
-    .map((m: { role: string; content: string }) => 
-      `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`
+def chat(messages, *, route: str, thinking: bool = False, **kw):
+    resp = client.chat.completions.create(
+        model="subconscious/tim-qwen3.6-27b",
+        messages=messages,
+        extra_body={"chat_template_kwargs": {"enable_thinking": thinking}, **kw},
     )
-    .join("\n\n") + "\n\nRespond to the user's latest message.";
-
-  const client = new Subconscious({
-    apiKey: process.env.SUBCONSCIOUS_API_KEY!,
-  });
-
-  // Use run() for clean text responses
-  const run = await client.run({
-    engine: "tim-gpt",
-    input: { instructions, tools },
-    options: { awaitCompletion: true },
-  });
-
-  // Return clean answer
-  return Response.json({
-    answer: run.result?.answer,
-    reasoning: run.result?.reasoning,  // Optional: for debugging
-  });
-}
+    u = resp.usage
+    cost_micros = u.prompt_tokens * 50 + u.completion_tokens * 350
+    log.info("subconscious.call", extra={
+        "route": route,
+        "thinking": thinking,
+        "input_tokens": u.prompt_tokens,
+        "output_tokens": u.completion_tokens,
+        "cost_micros": cost_micros,
+    })
+    return resp
 ```
 
-**Note**: For streaming with reasoning display, see the "Streaming with Reasoning Display" section above. It shows the complete pattern for extracting thoughts from the JSON stream.
+## 17. Multiple completions (`n>1`)
 
-**Client-side usage (React):**
+Returns N choices from one batched call. Cheaper than N separate requests because the prompt is processed once.
 
-```typescript
-// components/Chat.tsx
-"use client";
+```python
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{"role": "user", "content": "Suggest a random English word."}],
+    n=3,
+    max_tokens=20,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
 
-import { useState } from "react";
+for i, choice in enumerate(resp.choices):
+    print(f"[{i}] {choice.message.content}")
 
-export function Chat() {
-  const [messages, setMessages] = useState<Array<{role: string; content: string}>>([]);
-  const [input, setInput] = useState("");
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const userMessage = { role: "user", content: input };
-    setMessages(prev => [...prev, userMessage]);
-    setInput("");
-
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [...messages, userMessage],
-        tools: []
-      }),
-    });
-
-    const data = await response.json();
-    setMessages(prev => [...prev, { role: "assistant", content: data.answer }]);
-  };
-
-  return (
-    <div>
-      {messages.map((m, i) => (
-        <div key={i}>{m.role}: {m.content}</div>
-      ))}
-      <form onSubmit={handleSubmit}>
-        <input value={input} onChange={e => setInput(e.target.value)} />
-        <button type="submit">Send</button>
-      </form>
-    </div>
-  );
-}
+# Usage shows total tokens across all completions
+print(f"usage: prompt={resp.usage.prompt_tokens} completion={resp.usage.completion_tokens}")
 ```
 
-## Important Notes
+Useful for: sampling diversity, generating multiple suggestions to rank client-side, ensemble approaches.
 
-1. **Always use `run.result?.answer`** - This is the clean text response
-2. **`stream()` returns raw JSON** - You must parse it. See `streaming-and-reasoning.md` for complete guide
-3. **Convert messages to instructions** - Subconscious uses single string, not array
-4. **Environment variable**: `SUBCONSCIOUS_API_KEY` (not `OPENAI_API_KEY`)
-5. **For reasoning UI**: Use `stream()` and extract thoughts. See examples above.
-6. **For simple chat**: Use `run()` - it's easier and returns clean text directly
+## 18. Vision via data URL (most reliable image path)
 
-## Running Examples
+The model's spec says text-only, but vision works for many image sources. **Data URLs are the most reliable path** — they don't depend on the gateway being able to fetch a remote URL.
 
-### Setup
+```python
+import base64
+from openai import OpenAI
 
-**Python:**
-```bash
-pip install subconscious fastapi uvicorn
+client = OpenAI(
+    base_url="https://api.subconscious.dev/v1",
+    api_key=os.environ["SUBCONSCIOUS_API_KEY"],
+)
+
+with open("photo.png", "rb") as f:
+    data = base64.b64encode(f.read()).decode()
+
+resp = client.chat.completions.create(
+    model="subconscious/tim-qwen3.6-27b",
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "What is in this image?"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}},
+        ],
+    }],
+    max_tokens=200,
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+print(resp.choices[0].message.content)
 ```
 
-**Node.js:**
-```bash
-npm install subconscious express
-npm install -D @types/express typescript
+Audio (`input_audio`), file (`file`), and video blocks all return 400 — vision-only.
+
+## 19. Check the model's capabilities programmatically
+
+```python
+import httpx
+import os
+
+r = httpx.get(
+    "https://api.subconscious.dev/v1/models",
+    headers={"Authorization": f"Bearer {os.environ['SUBCONSCIOUS_API_KEY']}"},
+    timeout=30.0,
+)
+spec = r.json()["data"][0]
+print(f"context: {spec['context_length']}")
+print(f"max output: {spec['max_completion_tokens']}")
+print(f"sampling params: {spec['supported_sampling_parameters']}")
+print(f"features: {spec['supported_features']}")
+print(f"modalities: in={spec['input_modalities']} out={spec['output_modalities']}")
 ```
 
-**Next.js:**
-```bash
-npm install subconscious
-# Add to .env.local:
-# SUBCONSCIOUS_API_KEY=your-key-here
-```
-
-### Get API Key
-
-1. Sign up at https://subconscious.dev/platform
-2. Generate API key from dashboard
-3. Set as environment variable: `SUBCONSCIOUS_API_KEY`
-
-### For Local Tool Servers
-
-Use ngrok to expose local servers:
-```bash
-ngrok http 8000
-# Use the ngrok URL in your tool definitions
-```
-
-## Next Steps
-
-- See `tools-guide.md` for detailed tool documentation
-- See `api-reference.md` for complete API reference
-- Check https://docs.subconscious.dev for latest updates
+Use this as a self-check in your app's startup or test suite so you notice when capabilities change.
